@@ -616,7 +616,7 @@ function App() {
     return yearlyReports.filter((y) => y.key === yearFilter);
   }, [yearlyReports, yearFilter]);
 
-  if (isBooting) return <main className="boot"><img src="/logo_cash.png" alt="Cash Point" className="boot-logo" /><h1>Cash Point</h1></main>;
+  if (isBooting) return <main className="boot"><img src="/logo.png" alt="Cash Point" className="boot-logo" /></main>;
 
   if (!token) {
     return (

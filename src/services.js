@@ -1,3 +1,6 @@
+// API base URL
+// Local dev: http://localhost:5000/api
+// Production (Vercel): VITE_API_URL avy amin'ny env
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 
 export async function api(path, options = {}) {
@@ -18,6 +21,7 @@ export async function api(path, options = {}) {
   return data;
 }
 
+// Offline DB (IndexedDB)
 const DB_NAME = "cash-point-offline";
 const QUEUE_STORE = "queue";
 const CACHE_STORE = "cache";
@@ -39,6 +43,7 @@ function openDB() {
   });
 }
 
+// Queue helpers
 export async function queueOperation(op) {
   return queueRequest({ type: "operation", payload: op.payload, createdAt: op.createdAt || new Date().toISOString() });
 }
@@ -99,6 +104,7 @@ export async function removeQueuedRequest(id) {
   db.close();
 }
 
+// Cache helpers
 export async function cacheSet(key, value) {
   const db = await openDB();
   await new Promise((resolve, reject) => {
