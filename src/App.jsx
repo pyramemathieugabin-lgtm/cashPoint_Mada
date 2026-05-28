@@ -12,7 +12,7 @@ const pageMeta = {
   accueil: { title: "Vue generale", subtitle: "Soldes et activite du jour" },
   historique: { title: "Journal", subtitle: "Mouvements recents" },
   caisse: { title: "Pilotage caisse", subtitle: "Cash et float par operateur" },
-  rapport: { title: "Resultats", subtitle: "Indicateurs de performance" },
+  rapport: { title: "Rapports", subtitle: "Indicateurs de performance" },
   tarifs: { title: "Regles tarifaires", subtitle: "Commissions et frais" },
 };
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
