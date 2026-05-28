@@ -1,8 +1,13 @@
+// =====================
 // API base URL
+// =====================
 // Local dev: http://localhost:5000/api
 // Production (Vercel): VITE_API_URL avy amin'ny env
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 
+// =====================
+// API helper
+// =====================
 export async function api(path, options = {}) {
   const token = localStorage.getItem("cp_token");
   const headers = {
@@ -11,17 +16,40 @@ export async function api(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
-  const data = await response.json().catch(() => ({}));
+  let response;
+  let data;
+
+  try {
+    response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  } catch (err) {
+    console.error("❌ Network error:", err);
+    throw new Error("Impossible de contacter le serveur");
+  }
+
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  // Debug log (utile pour Vercel)
+  console.log("📡 API response:", response.status, data);
 
   if (!response.ok) {
-    throw new Error(data.message || "Erreur API");
+    throw new Error(data.message || `Erreur API (${response.status})`);
+  }
+
+  // Fallback si data vide
+  if (data === null || typeof data !== "object") {
+    return {};
   }
 
   return data;
 }
 
-// Offline DB (IndexedDB)
+// =====================
+// IndexedDB (Offline)
+// =====================
 const DB_NAME = "cash-point-offline";
 const QUEUE_STORE = "queue";
 const CACHE_STORE = "cache";
@@ -43,9 +71,15 @@ function openDB() {
   });
 }
 
+// =====================
 // Queue helpers
+// =====================
 export async function queueOperation(op) {
-  return queueRequest({ type: "operation", payload: op.payload, createdAt: op.createdAt || new Date().toISOString() });
+  return queueRequest({
+    type: "operation",
+    payload: op.payload,
+    createdAt: op.createdAt || new Date().toISOString(),
+  });
 }
 
 export async function queueRequest(request) {
@@ -104,12 +138,18 @@ export async function removeQueuedRequest(id) {
   db.close();
 }
 
+// =====================
 // Cache helpers
+// =====================
 export async function cacheSet(key, value) {
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(CACHE_STORE, "readwrite");
-    tx.objectStore(CACHE_STORE).put({ key, value, updatedAt: new Date().toISOString() });
+    tx.objectStore(CACHE_STORE).put({
+      key,
+      value,
+      updatedAt: new Date().toISOString(),
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
