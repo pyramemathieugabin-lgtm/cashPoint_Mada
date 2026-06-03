@@ -3,7 +3,33 @@
 // =====================
 // Local dev: http://localhost:5000/api
 // Production (Vercel): VITE_API_URL avy amin'ny env
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
+const DEFAULT_API_URL = import.meta.env.DEV
+  ? "http://localhost:5000/api"
+  : "https://upbeat-learning-production-be16.up.railway.app/api";
+
+function normalizeApiUrl(value) {
+  const raw = String(value || DEFAULT_API_URL).trim().replace(/\/+$/, "");
+  if (!raw) return DEFAULT_API_URL;
+
+  const withProtocol = raw.startsWith("//")
+    ? `https:${raw}`
+    : /^[a-z][a-z\d+\-.]*:\/\//i.test(raw)
+      ? raw
+      : raw.startsWith("localhost") || raw.startsWith("127.0.0.1")
+        ? `http://${raw}`
+        : `https://${raw}`;
+
+  const url = new URL(withProtocol);
+  if (!url.pathname || url.pathname === "/") {
+    url.pathname = "/api";
+  } else if (!url.pathname.replace(/\/+$/, "").endsWith("/api")) {
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/api`;
+  }
+
+  return url.toString().replace(/\/$/, "");
+}
+
+const API_URL = normalizeApiUrl(import.meta.env.VITE_API_URL);
 
 // =====================
 // API helper
