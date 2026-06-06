@@ -1,7 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { api, queueOperation, getQueuedOperations, clearQueuedOperations, queueRequest, getQueuedRequests, removeQueuedRequest, cacheSet, cacheGet } from "./services";
+import {
+  api,
+  queueOperation,
+  getQueuedOperations,
+  clearQueuedOperations,
+  queueRequest,
+  getQueuedRequests,
+  removeQueuedRequest,
+  getStoredToken,
+  saveToken,
+  clearToken,
+  getStoredUser,
+  saveStoredUser,
+  saveSnapshot,
+  getSnapshot,
+} from "./services";
 
 const operators = ["YAS", "AIRTEL", "ORANGE"];
 const types = ["DEPOT", "RETRAIT", "TRANSFERT", "CREDIT"];
@@ -41,7 +56,7 @@ const getIsoWeekInfo = (dateInput) => {
 };
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem("cp_token") || "");
+  const [token, setToken] = useState(getStoredToken());
   const [isBooting, setIsBooting] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [activePage, setActivePage] = useState("accueil");
@@ -52,7 +67,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
 
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(getStoredUser());
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
   const [history, setHistory] = useState([]);
@@ -141,6 +156,28 @@ function App() {
     setShowOperationForm(true);
   };
 
+  const applySnapshot = (snapshot, offlineMessage) => {
+    setUser(snapshot.me || null);
+    setDashboard(snapshot.dash || null);
+    setBalances(snapshot.cash?.operators || []);
+    setDayStarted(Boolean(snapshot.cash?.dayStarted));
+    setTariffs(snapshot.tariffList || []);
+    setHistory(snapshot.hist || []);
+    setJournals(Array.isArray(snapshot.journalsList) ? snapshot.journalsList : []);
+    if (offlineMessage) setMessage(offlineMessage);
+  };
+
+  const persistSnapshot = async (overrides = {}) => {
+    await saveSnapshot({
+      me: overrides.me ?? user,
+      dash: overrides.dash ?? dashboard,
+      cash: overrides.cash ?? { operators: balances, dayStarted },
+      tariffList: overrides.tariffList ?? tariffs,
+      hist: overrides.hist ?? history,
+      journalsList: overrides.journalsList ?? journals,
+    });
+  };
+
   const fetchAll = async () => {
     try {
       const [me, dash, cash, tariffList, hist, journalsList] = await Promise.all([
@@ -158,7 +195,8 @@ function App() {
       setTariffs(tariffList);
       setHistory(hist);
       setJournals(Array.isArray(journalsList) ? journalsList : []);
-      await cacheSet("snapshot", {
+      saveStoredUser(me);
+      await saveSnapshot({
         me,
         dash,
         cash,
@@ -167,16 +205,9 @@ function App() {
         journalsList,
       });
     } catch (error) {
-      const snapshot = await cacheGet("snapshot");
+      const snapshot = await getSnapshot();
       if (!snapshot) throw error;
-      setUser(snapshot.me || null);
-      setDashboard(snapshot.dash || null);
-      setBalances(snapshot.cash?.operators || []);
-      setDayStarted(Boolean(snapshot.cash?.dayStarted));
-      setTariffs(snapshot.tariffList || []);
-      setHistory(snapshot.hist || []);
-      setJournals(Array.isArray(snapshot.journalsList) ? snapshot.journalsList : []);
-      setMessage("Mode hors ligne: données locales affichées.");
+      applySnapshot(snapshot, "Mode hors ligne: données locales affichées.");
     }
   };
 
@@ -195,11 +226,19 @@ function App() {
     const queue = await getQueuedOperations();
     if (!queue.length) return;
     const result = await api("/dashboard/sync", { method: "POST", body: JSON.stringify({ operations: queue.map((x) => x.payload) }) });
-    await clearQueuedOperations();
+    if (Number(result.failed || 0) === 0) {
+      await clearQueuedOperations();
+    }
     setMessage(`Synchronisation: ${result.synced} OK, ${result.duplicated} doublons, ${result.failed} erreurs`);
   };
 
   useEffect(() => { const t = setTimeout(() => setIsBooting(false), 900); return () => clearTimeout(t); }, []);
+  useEffect(() => {
+    if (!authReady) return;
+    getSnapshot().then((snapshot) => {
+      if (snapshot) applySnapshot(snapshot);
+    }).catch(() => {});
+  }, [authReady]);
   useEffect(() => {
     const on = () => setIsOnline(true);
     const off = () => setIsOnline(false);
@@ -253,10 +292,16 @@ function App() {
   const onAuth = async (e) => {
     e.preventDefault();
     try {
+      if (!navigator.onLine) {
+        throw new Error("Connexion internet requise pour la premiere authentification.");
+      }
       if (mode === "signup") await api("/auth/signup", { method: "POST", body: JSON.stringify({ ...authForm, role: "admin" }) });
       const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: authForm.email, password: authForm.password }) });
-      localStorage.setItem("cp_token", login.token);
+      saveToken(login.token);
       setToken(login.token);
+      const me = await api("/auth/me");
+      saveStoredUser(me);
+      setUser(me);
     } catch (error) { setMessage(error.message); }
   };
 
@@ -295,11 +340,26 @@ function App() {
       externalId: crypto.randomUUID(),
     };
     try {
-      await queueOperation({ payload, createdAt: new Date().toISOString() });
+      const createdAt = new Date().toISOString();
+      await queueOperation({ payload, createdAt });
+      const offlineOperation = {
+        ...payload,
+        id: payload.externalId,
+        kind: "TRANSACTION",
+        amount: payload.amount,
+        gain: preview?.gain || 0,
+        personalFee: preview?.personalFee || 0,
+        createdAt,
+        isPendingSync: true,
+      };
+      const nextHistory = [offlineOperation, ...history];
+      setHistory(nextHistory);
+      await persistSnapshot({ hist: nextHistory });
       if (navigator.onLine) await trySync();
       setShowOperationForm(false);
       setOpForm({ operator: "YAS", operationType: "DEPOT", customerPhone: "", customerName: "", reference: "", amount: "", includeWithdrawalFeeForTransfer: false });
-      await fetchAll();
+      if (navigator.onLine) await fetchAll();
+      else setMessage("Operation enregistree sur ce telephone. Synchronisation automatique au retour de la connexion.");
     } catch (error) { setMessage(error.message); }
   };
 
@@ -682,7 +742,7 @@ function App() {
         </nav>
         <div className="left-actions">
           <span className={`net ${isOnline ? "on" : "off"}`}>{isOnline ? "En ligne" : "Hors ligne"}</span>
-          <button className="btn quiet" onClick={() => { localStorage.removeItem("cp_token"); setToken(""); }}>Deconnexion</button>
+          <button className="btn quiet" onClick={() => { clearToken(); setToken(""); setUser(null); }}>Deconnexion</button>
         </div>
       </aside>
 
