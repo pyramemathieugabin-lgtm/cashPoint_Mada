@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CashPoint</string>
+    <string name="title_activity_main">CashPoint</string>
+    <string name="package_name">com.cashpoint.app</string>
+    <string name="custom_url_scheme">com.cashpoint.app</string>
+</resources>

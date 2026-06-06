@@ -30,12 +30,15 @@ function normalizeApiUrl(value) {
 }
 
 const API_URL = normalizeApiUrl(import.meta.env.VITE_API_URL);
+const TOKEN_KEY = "cp_token";
+const USER_KEY = "cp_user";
+const SNAPSHOT_KEY = "snapshot";
 
 // =====================
 // API helper
 // =====================
 export async function api(path, options = {}) {
-  const token = localStorage.getItem("cp_token");
+  const token = localStorage.getItem(TOKEN_KEY);
   const headers = {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -71,6 +74,31 @@ export async function api(path, options = {}) {
   }
 
   return data;
+}
+
+export function getStoredToken() {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+export function saveToken(token) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+export function getStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoredUser(user) {
+  if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 // =====================
@@ -192,6 +220,14 @@ export async function cacheGet(key) {
   });
   db.close();
   return row?.value || null;
+}
+
+export async function saveSnapshot(snapshot) {
+  await cacheSet(SNAPSHOT_KEY, snapshot);
+}
+
+export async function getSnapshot() {
+  return cacheGet(SNAPSHOT_KEY);
 }
 
 export async function clearAllQueue() {
