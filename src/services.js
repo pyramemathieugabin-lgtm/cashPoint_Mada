@@ -1,8 +1,5 @@
-// =====================
-// API base URL
-// =====================
-// Local dev: http://localhost:5000/api
-// Production (Vercel): VITE_API_URL avy amin'ny env
+import { Capacitor, CapacitorHttp } from "@capacitor/core";
+
 const DEFAULT_API_URL = import.meta.env.DEV
   ? "http://localhost:5000/api"
   : "https://upbeat-learning-production-be16.up.railway.app/api";
@@ -25,7 +22,6 @@ function normalizeApiUrl(value) {
   } else if (!url.pathname.replace(/\/+$/, "").endsWith("/api")) {
     url.pathname = `${url.pathname.replace(/\/+$/, "")}/api`;
   }
-
   return url.toString().replace(/\/$/, "");
 }
 
@@ -33,10 +29,11 @@ const API_URL = normalizeApiUrl(import.meta.env.VITE_API_URL);
 const TOKEN_KEY = "cp_token";
 const USER_KEY = "cp_user";
 const SNAPSHOT_KEY = "snapshot";
+const DB_NAME = "cash-point-offline";
+const QUEUE_STORE = "queue";
+const CACHE_STORE = "cache";
+const isNative = Capacitor.isNativePlatform();
 
-// =====================
-// API helper
-// =====================
 export async function api(path, options = {}) {
   const token = localStorage.getItem(TOKEN_KEY);
   const headers = {
@@ -49,31 +46,45 @@ export async function api(path, options = {}) {
   let data;
 
   try {
-    response = await fetch(`${API_URL}${path}`, { ...options, headers });
-  } catch (err) {
-    console.error("❌ Network error:", err);
-    throw new Error("Impossible de contacter le serveur");
+    if (isNative) {
+      let requestData = options.body;
+      if (typeof requestData === "string" && requestData) {
+        try {
+          requestData = JSON.parse(requestData);
+        } catch {
+          // Keep non-JSON request bodies unchanged.
+        }
+      }
+      const nativeResponse = await CapacitorHttp.request({
+        url: `${API_URL}${path}`,
+        method: options.method || "GET",
+        headers,
+        data: requestData,
+        connectTimeout: 20000,
+        readTimeout: 30000,
+      });
+      response = {
+        ok: nativeResponse.status >= 200 && nativeResponse.status < 300,
+        status: nativeResponse.status,
+      };
+      data = nativeResponse.data;
+    } else {
+      response = await fetch(`${API_URL}${path}`, { ...options, headers });
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+    }
+  } catch (error) {
+    console.error("Network error:", error);
+    throw new Error(`Impossible de contacter le serveur (${new URL(API_URL).host})`, { cause: error });
   }
-
-  try {
-    data = await response.json();
-  } catch {
-    data = {};
-  }
-
-  // Debug log (utile pour Vercel)
-  console.log("📡 API response:", response.status, data);
 
   if (!response.ok) {
-    throw new Error(data.message || `Erreur API (${response.status})`);
+    throw new Error(data?.message || `Erreur API (${response.status})`);
   }
-
-  // Fallback si data vide
-  if (data === null || typeof data !== "object") {
-    return {};
-  }
-
-  return data;
+  return data !== null && typeof data === "object" ? data : {};
 }
 
 export function getStoredToken() {
@@ -101,13 +112,6 @@ export function saveStoredUser(user) {
   if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
-// =====================
-// IndexedDB (Offline)
-// =====================
-const DB_NAME = "cash-point-offline";
-const QUEUE_STORE = "queue";
-const CACHE_STORE = "cache";
-
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 2);
@@ -125,9 +129,6 @@ function openDB() {
   });
 }
 
-// =====================
-// Queue helpers
-// =====================
 export async function queueOperation(op) {
   return queueRequest({
     type: "operation",
@@ -138,9 +139,10 @@ export async function queueOperation(op) {
 
 export async function queueRequest(request) {
   const db = await openDB();
+  const ownerId = getStoredUser()?.id;
   await new Promise((resolve, reject) => {
     const tx = db.transaction(QUEUE_STORE, "readwrite");
-    tx.objectStore(QUEUE_STORE).add(request);
+    tx.objectStore(QUEUE_STORE).add({ ...request, ownerId });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -149,31 +151,35 @@ export async function queueRequest(request) {
 
 export async function getQueuedOperations() {
   const queue = await getQueuedRequests();
-  return queue.filter((x) => x.type === "operation");
+  return queue.filter((item) => item.type === "operation");
 }
 
 export async function getQueuedRequests() {
   const db = await openDB();
-  const ops = await new Promise((resolve, reject) => {
+  const ownerId = getStoredUser()?.id;
+  const requests = await new Promise((resolve, reject) => {
     const tx = db.transaction(QUEUE_STORE, "readonly");
     const req = tx.objectStore(QUEUE_STORE).getAll();
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
   });
   db.close();
-  return ops.sort((a, b) => (a.id || 0) - (b.id || 0));
+  return requests
+    .filter((item) => item.ownerId === ownerId)
+    .sort((a, b) => (a.id || 0) - (b.id || 0));
 }
 
 export async function clearQueuedOperations() {
   const db = await openDB();
+  const ownerId = getStoredUser()?.id;
   await new Promise((resolve, reject) => {
     const tx = db.transaction(QUEUE_STORE, "readwrite");
     const store = tx.objectStore(QUEUE_STORE);
     const req = store.getAll();
     req.onsuccess = () => {
       (req.result || [])
-        .filter((x) => x.type === "operation")
-        .forEach((x) => store.delete(x.id));
+        .filter((item) => item.type === "operation" && item.ownerId === ownerId)
+        .forEach((item) => store.delete(item.id));
     };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -192,18 +198,11 @@ export async function removeQueuedRequest(id) {
   db.close();
 }
 
-// =====================
-// Cache helpers
-// =====================
 export async function cacheSet(key, value) {
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(CACHE_STORE, "readwrite");
-    tx.objectStore(CACHE_STORE).put({
-      key,
-      value,
-      updatedAt: new Date().toISOString(),
-    });
+    tx.objectStore(CACHE_STORE).put({ key, value, updatedAt: new Date().toISOString() });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -223,10 +222,16 @@ export async function cacheGet(key) {
 }
 
 export async function saveSnapshot(snapshot) {
-  await cacheSet(SNAPSHOT_KEY, snapshot);
+  const userId = getStoredUser()?.id;
+  await cacheSet(userId ? `${SNAPSHOT_KEY}:${userId}` : SNAPSHOT_KEY, snapshot);
 }
 
 export async function getSnapshot() {
+  const userId = getStoredUser()?.id;
+  if (userId) {
+    const userSnapshot = await cacheGet(`${SNAPSHOT_KEY}:${userId}`);
+    if (userSnapshot) return userSnapshot;
+  }
   return cacheGet(SNAPSHOT_KEY);
 }
 
