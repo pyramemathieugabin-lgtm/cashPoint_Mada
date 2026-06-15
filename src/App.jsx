@@ -4,8 +4,6 @@ import autoTable from "jspdf-autotable";
 import {
   api,
   queueOperation,
-  getQueuedOperations,
-  clearQueuedOperations,
   queueRequest,
   getQueuedRequests,
   removeQueuedRequest,
@@ -53,6 +51,109 @@ const getIsoWeekInfo = (dateInput) => {
   const weekNo = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
   const week = String(weekNo).padStart(2, "0");
   return { key: `${utc.getUTCFullYear()}-W${week}`, year: utc.getUTCFullYear(), week: weekNo };
+};
+
+const findLocalTariff = (tariffs, operator, operationType, amount) =>
+  tariffs.find((tariff) =>
+    tariff.operator === operator &&
+    tariff.operationType === operationType &&
+    Number(tariff.minAmount) <= Number(amount) &&
+    Number(tariff.maxAmount) >= Number(amount)
+  );
+
+const calculateLocalValues = (tariffs, payload) => {
+  const tariff = findLocalTariff(tariffs, payload.operator, payload.operationType, payload.amount);
+  if (!tariff) throw new Error("Tarif introuvable. Connectez-vous une fois pour charger les tarifs.");
+  let operatorFee = Number(tariff.operatorFee || 0);
+  let personalFee = Number(tariff.personalFee || 0);
+  let gain = Number(tariff.gainCumule || 0);
+  if (payload.operationType === "TRANSFERT" && payload.includeWithdrawalFeeForTransfer) {
+    const retrait = findLocalTariff(tariffs, payload.operator, "RETRAIT", payload.amount);
+    operatorFee += Number(retrait?.operatorFee || 0);
+    personalFee += Number(retrait?.personalFee || 0);
+    gain += Number(retrait?.gainCumule || 0);
+  }
+  const clientFee = operatorFee + personalFee;
+  return { operatorFee, personalFee, clientFee, gain, totalFee: Number(payload.amount) + clientFee };
+};
+
+const applyLocalBalance = (balance, operation, inverse = false) => {
+  const direction = inverse ? -1 : 1;
+  const amount = Number(operation.amount || 0);
+  const operatorFee = Number(operation.operatorFee || 0);
+  const clientFee = Number(operation.clientFee || 0);
+  const gain = Number(operation.gain || 0);
+  let cashDelta;
+  let mobileDelta;
+  if (operation.operationType === "DEPOT") {
+    cashDelta = amount;
+    mobileDelta = -amount + gain;
+  } else if (operation.operationType === "CREDIT") {
+    cashDelta = amount + operatorFee;
+    mobileDelta = -amount + gain;
+  } else {
+    cashDelta = amount + clientFee;
+    mobileDelta = -amount - operatorFee + gain;
+  }
+  return {
+    ...balance,
+    cashBalance: Number(balance.cashBalance || 0) + direction * cashDelta,
+    mobileBalance: Number(balance.mobileBalance || 0) + direction * mobileDelta,
+  };
+};
+
+const updateLocalDashboard = (dashboard, balances, history) => {
+  const transactions = history.filter((item) => item.kind === "TRANSACTION" && !item.isCancelled);
+  const reappro = history.filter((item) => item.kind === "REAPPRO");
+  return {
+    ...(dashboard || {}),
+    cashBalance: balances.reduce((sum, item) => sum + Number(item.cashBalance || 0), 0),
+    mobileBalance: balances.reduce((sum, item) => sum + Number(item.mobileBalance || 0), 0),
+    operatorBalances: balances,
+    totalGain: transactions.reduce((sum, item) => sum + Number(item.gain || 0), 0),
+    totalPersonalFee: transactions.reduce((sum, item) => sum + Number(item.personalFee || 0), 0),
+    totalBonus: transactions.reduce((sum, item) => sum + Number(item.gain || 0) + Number(item.personalFee || 0), 0),
+    operationCount: transactions.length,
+    reapproAmountToday: reappro.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+  };
+};
+
+const buildLocalJournal = (history, closingBalances, createdAt) => {
+  const date = new Date(createdAt);
+  const dateKey = date.toISOString().slice(0, 10);
+  const dayItems = history.filter((item) => String(item.createdAt || "").slice(0, 10) === dateKey);
+  const operatorsSummary = operators.map((operator) => {
+    const opening = dayItems.find((item) => item.kind === "OPENING" && item.operator === operator);
+    const balance = closingBalances.find((item) => item.operator === operator) || {};
+    const tx = dayItems.filter((item) => item.kind === "TRANSACTION" && item.operator === operator && !item.isCancelled);
+    const reappro = dayItems.filter((item) => item.kind === "REAPPRO" && item.operator === operator);
+    return {
+      operator,
+      openingInitialCash: Number(opening?.initialCashBalance || 0),
+      openingInitialMobile: Number(opening?.initialMobileBalance || 0),
+      closingFinalCash: Number(balance.cashBalance || 0),
+      closingFinalMobile: Number(balance.mobileBalance || 0),
+      txCount: tx.length,
+      gain: tx.reduce((sum, item) => sum + Number(item.gain || 0), 0),
+      personalFee: tx.reduce((sum, item) => sum + Number(item.personalFee || 0), 0),
+      reapproCashAmount: reappro.reduce((sum, item) => sum + Number(item.reapproCashAmount || 0), 0),
+      reapproMobileAmount: reappro.reduce((sum, item) => sum + Number(item.reapproMobileAmount || 0), 0),
+    };
+  });
+  return {
+    date,
+    dateKey,
+    operators: operatorsSummary,
+    totalInitialCash: operatorsSummary.reduce((sum, item) => sum + item.openingInitialCash, 0),
+    totalInitialMobile: operatorsSummary.reduce((sum, item) => sum + item.openingInitialMobile, 0),
+    totalFinalCash: operatorsSummary.reduce((sum, item) => sum + item.closingFinalCash, 0),
+    totalFinalMobile: operatorsSummary.reduce((sum, item) => sum + item.closingFinalMobile, 0),
+    totalOps: operatorsSummary.reduce((sum, item) => sum + item.txCount, 0),
+    totalGain: operatorsSummary.reduce((sum, item) => sum + item.gain, 0),
+    totalPersonalFee: operatorsSummary.reduce((sum, item) => sum + item.personalFee, 0),
+    totalReapproAmount: operatorsSummary.reduce((sum, item) => sum + item.reapproCashAmount + item.reapproMobileAmount, 0),
+    isPendingSync: true,
+  };
 };
 
 function App() {
@@ -179,6 +280,11 @@ function App() {
   };
 
   const fetchAll = async () => {
+    if (!navigator.onLine) {
+      const snapshot = await getSnapshot();
+      if (snapshot) applySnapshot(snapshot, "Mode hors ligne: donnees locales disponibles.");
+      return;
+    }
     try {
       const [me, dash, cash, tariffList, hist, journalsList] = await Promise.all([
         api("/auth/me"),
@@ -205,6 +311,7 @@ function App() {
         journalsList,
       });
     } catch (error) {
+      setIsOnline(false);
       const snapshot = await getSnapshot();
       if (!snapshot) throw error;
       applySnapshot(snapshot, "Mode hors ligne: données locales affichées.");
@@ -215,21 +322,20 @@ function App() {
     if (!authReady || !navigator.onLine) return;
     const queuedRequests = await getQueuedRequests();
     for (const req of queuedRequests) {
-      if (req.type === "operation") continue;
       try {
-        await api(req.path, { method: req.method, body: JSON.stringify(req.body || {}) });
+        if (req.type === "operation") {
+          await api("/operations", { method: "POST", body: JSON.stringify(req.payload) });
+        } else {
+          await api(req.path, { method: req.method, body: JSON.stringify(req.body || {}) });
+        }
         await removeQueuedRequest(req.id);
-      } catch (_error) {
-        // keep queued for next retry
+      } catch (error) {
+        setIsOnline(false);
+        throw error;
       }
     }
-    const queue = await getQueuedOperations();
-    if (!queue.length) return;
-    const result = await api("/dashboard/sync", { method: "POST", body: JSON.stringify({ operations: queue.map((x) => x.payload) }) });
-    if (Number(result.failed || 0) === 0) {
-      await clearQueuedOperations();
-    }
-    setMessage(`Synchronisation: ${result.synced} OK, ${result.duplicated} doublons, ${result.failed} erreurs`);
+    setIsOnline(true);
+    setMessage("Synchronisation terminee.");
   };
 
   useEffect(() => { const t = setTimeout(() => setIsBooting(false), 900); return () => clearTimeout(t); }, []);
@@ -267,7 +373,7 @@ function App() {
     };
   }, []);
 
-  useEffect(() => { if (!authReady) return; fetchAll().catch((e) => setMessage(e.message)); trySync().catch(() => {}); }, [authReady, period]);
+  useEffect(() => { if (!authReady) return; fetchAll().catch(() => {}); trySync().catch(() => {}); }, [authReady, period]);
   useEffect(() => { if (!authReady || !isOnline) return; trySync().then(fetchAll).catch(() => {}); }, [authReady, isOnline]);
   useEffect(() => {
     setSelectedJournalDay(null);
@@ -278,16 +384,12 @@ function App() {
 
   useEffect(() => {
     if (!authReady || !opForm.amount) return setPreview(null);
-    api("/operations/preview", {
-      method: "POST",
-      body: JSON.stringify({
-        operator: opForm.operator,
-        operationType: opForm.operationType,
-        amount: Number(opForm.amount),
-        includeWithdrawalFeeForTransfer: opForm.includeWithdrawalFeeForTransfer,
-      }),
-    }).then(setPreview).catch(() => setPreview(null));
-  }, [opForm, authReady]);
+    try {
+      setPreview(calculateLocalValues(tariffs, { ...opForm, amount: Number(opForm.amount) }));
+    } catch {
+      setPreview(null);
+    }
+  }, [opForm, authReady, tariffs]);
 
   const onAuth = async (e) => {
     e.preventDefault();
@@ -308,11 +410,22 @@ function App() {
   const saveTariff = async (e) => {
     e.preventDefault();
     try {
-      if (editingTariffId) await api(`/tariffs/${editingTariffId}`, { method: "PATCH", body: JSON.stringify(tariffForm) });
-      else await api("/tariffs/upsert", { method: "POST", body: JSON.stringify(tariffForm) });
+      const localId = editingTariffId || `local-${crypto.randomUUID()}`;
+      const nextTariffs = editingTariffId
+        ? tariffs.map((item) => item.id === editingTariffId ? { ...item, ...tariffForm, isPendingSync: true } : item)
+        : [{ ...tariffForm, id: localId, isPendingSync: true }, ...tariffs];
+      await queueRequest({
+        type: "request",
+        method: editingTariffId ? "PATCH" : "POST",
+        path: editingTariffId ? `/tariffs/${editingTariffId}` : "/tariffs/upsert",
+        body: { ...tariffForm, id: localId },
+        createdAt: new Date().toISOString(),
+      });
+      setTariffs(nextTariffs);
+      await persistSnapshot({ tariffList: nextTariffs });
       setEditingTariffId(null);
       setShowTariffForm(false);
-      await fetchAll();
+      trySync().then(fetchAll).catch(() => setMessage("Tarif enregistre hors ligne. Synchronisation automatique."));
     } catch (error) { setMessage(error.message); }
   };
 
@@ -323,7 +436,13 @@ function App() {
   };
 
   const onDeleteTariff = async (id) => {
-    try { await api(`/tariffs/${id}`, { method: "DELETE" }); await fetchAll(); }
+    try {
+      const nextTariffs = tariffs.filter((item) => item.id !== id);
+      await queueRequest({ type: "request", method: "DELETE", path: `/tariffs/${id}`, body: {}, createdAt: new Date().toISOString() });
+      setTariffs(nextTariffs);
+      await persistSnapshot({ tariffList: nextTariffs });
+      trySync().then(fetchAll).catch(() => setMessage("Tarif supprime hors ligne. Synchronisation automatique."));
+    }
     catch (error) { setMessage(error.message); }
   };
 
@@ -341,25 +460,28 @@ function App() {
     };
     try {
       const createdAt = new Date().toISOString();
+      const values = calculateLocalValues(tariffs, payload);
       await queueOperation({ payload, createdAt });
       const offlineOperation = {
         ...payload,
+        ...values,
         id: payload.externalId,
         kind: "TRANSACTION",
         amount: payload.amount,
-        gain: preview?.gain || 0,
-        personalFee: preview?.personalFee || 0,
         createdAt,
         isPendingSync: true,
       };
       const nextHistory = [offlineOperation, ...history];
+      const currentBalance = balances.find((item) => item.operator === payload.operator) || { operator: payload.operator, cashBalance: 0, mobileBalance: 0 };
+      const nextBalances = balances.map((item) => item.operator === payload.operator ? applyLocalBalance(currentBalance, offlineOperation) : item);
+      const nextDashboard = updateLocalDashboard(dashboard, nextBalances, nextHistory);
       setHistory(nextHistory);
-      await persistSnapshot({ hist: nextHistory });
-      if (navigator.onLine) await trySync();
+      setBalances(nextBalances);
+      setDashboard(nextDashboard);
+      await persistSnapshot({ hist: nextHistory, dash: nextDashboard, cash: { operators: nextBalances, dayStarted } });
       setShowOperationForm(false);
       setOpForm({ operator: "YAS", operationType: "DEPOT", customerPhone: "", customerName: "", reference: "", amount: "", includeWithdrawalFeeForTransfer: false });
-      if (navigator.onLine) await fetchAll();
-      else setMessage("Operation enregistree sur ce telephone. Synchronisation automatique au retour de la connexion.");
+      trySync().then(fetchAll).catch(() => setMessage("Operation enregistree sur ce telephone. Synchronisation automatique."));
     } catch (error) { setMessage(error.message); }
   };
 
@@ -373,51 +495,70 @@ function App() {
     e.preventDefault();
     try {
       if (!referenceEditorId) throw new Error("Aucune operation selectionnee.");
-      if (!navigator.onLine) {
-        await queueRequest({
-          type: "request",
-          method: "PATCH",
-          path: `/operations/${referenceEditorId}/reference`,
-          body: { reference: referenceEditorValue || null },
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        await api(`/operations/${referenceEditorId}/reference`, {
-          method: "PATCH",
-          body: JSON.stringify({ reference: referenceEditorValue || null }),
-        });
-      }
+      await queueRequest({
+        type: "request",
+        method: "PATCH",
+        path: `/operations/${referenceEditorId}/reference`,
+        body: { reference: referenceEditorValue || null },
+        createdAt: new Date().toISOString(),
+      });
+      const nextHistory = history.map((item) => item.id === referenceEditorId
+        ? { ...item, reference: referenceEditorValue || null, referenceEditCount: Number(item.referenceEditCount || 0) + 1, isPendingSync: true }
+        : item);
+      setHistory(nextHistory);
+      await persistSnapshot({ hist: nextHistory });
       setShowReferenceEditor(false);
       setReferenceEditorId(null);
       setReferenceEditorValue("");
-      if (navigator.onLine) await trySync();
-      await fetchAll();
+      trySync().then(fetchAll).catch(() => setMessage("Reference modifiee hors ligne. Synchronisation automatique."));
     } catch (error) { setMessage(error.message); }
   };
 
   const cancelOperation = async (id) => {
     try {
-      if (!navigator.onLine) {
-        await queueRequest({ type: "request", method: "POST", path: `/operations/${id}/cancel`, body: {}, createdAt: new Date().toISOString() });
-      } else {
-        await api(`/operations/${id}/cancel`, { method: "POST", body: JSON.stringify({}) });
-      }
-      if (navigator.onLine) await trySync();
-      await fetchAll();
+      const operation = history.find((item) => item.id === id);
+      if (!operation) throw new Error("Operation introuvable.");
+      await queueRequest({ type: "request", method: "POST", path: `/operations/${id}/cancel`, body: {}, createdAt: new Date().toISOString() });
+      const nextHistory = history.map((item) => item.id === id ? { ...item, isCancelled: true, cancelledAt: new Date().toISOString(), isPendingSync: true } : item);
+      const nextBalances = balances.map((item) => item.operator === operation.operator ? applyLocalBalance(item, operation, true) : item);
+      const nextDashboard = updateLocalDashboard(dashboard, nextBalances, nextHistory);
+      setHistory(nextHistory);
+      setBalances(nextBalances);
+      setDashboard(nextDashboard);
+      await persistSnapshot({ hist: nextHistory, dash: nextDashboard, cash: { operators: nextBalances, dayStarted } });
+      trySync().then(fetchAll).catch(() => setMessage("Operation annulee hors ligne. Synchronisation automatique."));
     } catch (error) { setMessage(error.message); }
   };
 
   const saveReappro = async (e) => {
     e.preventDefault();
     try {
-      if (!navigator.onLine) {
-        await queueRequest({ type: "request", method: "POST", path: "/cashbox/replenish", body: reapproForm, createdAt: new Date().toISOString() });
-      } else {
-        await api("/cashbox/replenish", { method: "POST", body: JSON.stringify(reapproForm) });
-      }
+      const createdAt = new Date().toISOString();
+      await queueRequest({ type: "request", method: "POST", path: "/cashbox/replenish", body: reapproForm, createdAt });
+      const nextBalances = balances.map((item) => item.operator === reapproForm.operator ? {
+        ...item,
+        cashBalance: Number(item.cashBalance || 0) + Number(reapproForm.cashAmount || 0),
+        mobileBalance: Number(item.mobileBalance || 0) + Number(reapproForm.mobileAmount || 0),
+      } : item);
+      const reapproOperation = {
+        id: `local-${crypto.randomUUID()}`,
+        kind: "REAPPRO",
+        operator: reapproForm.operator,
+        operationType: "DEPOT",
+        amount: Number(reapproForm.cashAmount || 0) + Number(reapproForm.mobileAmount || 0),
+        reapproCashAmount: Number(reapproForm.cashAmount || 0),
+        reapproMobileAmount: Number(reapproForm.mobileAmount || 0),
+        createdAt,
+        isPendingSync: true,
+      };
+      const nextHistory = [reapproOperation, ...history];
+      const nextDashboard = updateLocalDashboard(dashboard, nextBalances, nextHistory);
+      setBalances(nextBalances);
+      setHistory(nextHistory);
+      setDashboard(nextDashboard);
       setShowReapproForm(false);
-      if (navigator.onLine) await trySync();
-      await fetchAll();
+      await persistSnapshot({ hist: nextHistory, dash: nextDashboard, cash: { operators: nextBalances, dayStarted } });
+      trySync().then(fetchAll).catch(() => setMessage("Reapprovisionnement enregistre hors ligne. Synchronisation automatique."));
     }
     catch (error) { setMessage(error.message); }
   };
@@ -425,33 +566,74 @@ function App() {
   const startDay = async (e) => {
     e.preventDefault();
     try {
-      if (!navigator.onLine) {
-        await queueRequest({ type: "request", method: "POST", path: "/cashbox/day/start", body: { operators: startDayForm }, createdAt: new Date().toISOString() });
-      } else {
-        await api("/cashbox/day/start", { method: "POST", body: JSON.stringify({ operators: startDayForm }) });
-      }
+      const createdAt = new Date().toISOString();
+      await queueRequest({ type: "request", method: "POST", path: "/cashbox/day/start", body: { operators: startDayForm }, createdAt });
+      const nextBalances = startDayForm.map((item) => ({ ...item }));
+      const openings = nextBalances.map((item) => ({
+        id: `local-${crypto.randomUUID()}`,
+        kind: "OPENING",
+        operator: item.operator,
+        operationType: "DEPOT",
+        amount: Number(item.cashBalance || 0) + Number(item.mobileBalance || 0),
+        initialCashBalance: Number(item.cashBalance || 0),
+        initialMobileBalance: Number(item.mobileBalance || 0),
+        createdAt,
+        isPendingSync: true,
+      }));
+      const nextHistory = [...openings, ...history];
+      const nextDashboard = updateLocalDashboard(dashboard, nextBalances, nextHistory);
+      setBalances(nextBalances);
+      setHistory(nextHistory);
+      setDashboard(nextDashboard);
+      setDayStarted(true);
       setShowStartDayForm(false);
-      if (navigator.onLine) await trySync();
-      await fetchAll();
+      await persistSnapshot({ hist: nextHistory, dash: nextDashboard, cash: { operators: nextBalances, dayStarted: true } });
+      trySync().then(fetchAll).catch(() => setMessage("Journee ouverte hors ligne. Synchronisation automatique."));
     }
     catch (error) { setMessage(error.message); }
   };
 
   const closeDay = async () => {
     try {
-      if (!navigator.onLine) {
-        await queueRequest({ type: "request", method: "POST", path: "/cashbox/day/close", body: {}, createdAt: new Date().toISOString() });
-      } else {
-        await api("/cashbox/day/close", { method: "POST", body: JSON.stringify({}) });
-      }
-      if (navigator.onLine) await trySync();
-      await fetchAll();
+      const createdAt = new Date().toISOString();
+      await queueRequest({ type: "request", method: "POST", path: "/cashbox/day/close", body: {}, createdAt });
+      const closings = balances.map((item) => ({
+        id: `local-${crypto.randomUUID()}`,
+        kind: "CLOSING",
+        operator: item.operator,
+        operationType: "DEPOT",
+        amount: Number(item.cashBalance || 0) + Number(item.mobileBalance || 0),
+        finalCashBalance: Number(item.cashBalance || 0),
+        finalMobileBalance: Number(item.mobileBalance || 0),
+        createdAt,
+        isPendingSync: true,
+      }));
+      const nextHistory = [...closings, ...history];
+      const localJournal = buildLocalJournal(nextHistory, balances, createdAt);
+      const nextJournals = [localJournal, ...journals.filter((item) => item.dateKey !== localJournal.dateKey)];
+      setHistory(nextHistory);
+      setJournals(nextJournals);
+      setDayStarted(false);
+      await persistSnapshot({ hist: nextHistory, journalsList: nextJournals, cash: { operators: balances, dayStarted: false } });
+      trySync().then(fetchAll).catch(() => setMessage("Journee cloturee hors ligne. Synchronisation automatique."));
     }
     catch (error) { setMessage(error.message); }
   };
 
   const openJournalDay = async (dateValue) => {
     try {
+      if (!navigator.onLine) {
+        const journal = journals.find((item) => item.dateKey === dateValue);
+        if (!journal) throw new Error("Detail local introuvable pour cette journee.");
+        const operations = history.filter((item) => String(item.createdAt || "").slice(0, 10) === dateValue);
+        setSelectedJournalDay({
+          ...journal,
+          date: dateValue,
+          totalBonus: Number(journal.totalGain || 0) + Number(journal.totalPersonalFee || 0),
+          operations,
+        });
+        return;
+      }
       const day = await api(`/cashbox/journals/day/${dateValue}`);
       setSelectedJournalDay(day);
     } catch (error) {
