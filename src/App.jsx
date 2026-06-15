@@ -978,8 +978,19 @@ function App() {
               <button className={`btn ${period === "daily" ? "primary" : "quiet"}`} onClick={() => setPeriod("daily")}>Aujourd'hui</button>
               <button className={`btn ${period === "semester" ? "primary" : "quiet"}`} onClick={() => setPeriod("semester")}>Semestriel</button>
             </div>
-            <div className="list">
-              <div className="list-row list-header">
+            <div className={`list history-list ${isPhone ? "phone-history-table" : ""}`}>
+              <div className={`list-row list-header ${isPhone ? "phone-history-header" : ""}`}>
+                {isPhone ? (
+                  <>
+                    <span>Operateur</span>
+                    <span>Type</span>
+                    <span>Telephone</span>
+                    <span>Montant</span>
+                    <span>Reference</span>
+                    <span>Actions</span>
+                  </>
+                ) : (
+                  <>
                 <span>Heure</span>
                 <span>Operateur</span>
                 <span>Type</span>
@@ -989,6 +1000,8 @@ function App() {
                 <span>Référence</span>
                 <span>Gain</span>
                 <span>Action</span>
+                  </>
+                )}
               </div>
               {groupedHistory.length === 0 ? (
                 <div className="list-row empty-row">Aucune operation trouvee.</div>
