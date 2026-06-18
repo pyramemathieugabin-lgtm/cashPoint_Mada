@@ -313,18 +313,34 @@ button { border: 0; cursor: pointer; }
   display: grid;
   place-items: center;
   padding: 1rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 30;
   animation: fade .2s ease;
 }
 .dialog {
   width: min(620px, 100%);
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   background: #121c2d;
   border: 1px solid #2a3f60;
   border-radius: 18px;
   padding: 1rem;
   display: grid;
   gap: 0.65rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   animation: pop .2s ease;
+}
+.dialog > .row:last-child {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -1rem -1rem;
+  padding: 0.75rem 1rem 1rem;
+  background: #121c2d;
+  border-top: 1px solid #2a3f60;
+  z-index: 1;
 }
 .dialog h3, .dialog p { margin: 0; }
 .form-grid { display: grid; gap: 0.55rem; grid-template-columns: 1fr 1fr; }
