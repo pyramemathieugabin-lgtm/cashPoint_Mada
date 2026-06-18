@@ -27,7 +27,6 @@ const pageMeta = {
   caisse: { title: "Pilotage caisse", subtitle: "Cash et float par operateur" },
   rapport: { title: "Rapports", subtitle: "Indicateurs de performance" },
   tarifs: { title: "Regles tarifaires", subtitle: "Commissions et frais" },
-  utilisateurs: { title: "Utilisateurs", subtitle: "Comptes et validations" },
 };
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
 const formatArPdf = (v) => `${Number(v || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ")} Ar`;
@@ -166,15 +165,11 @@ function App() {
   const [activePage, setActivePage] = useState("accueil");
   const [mode, setMode] = useState("login");
   const [message, setMessage] = useState("");
-  const [hasAdmin, setHasAdmin] = useState(null);
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:1025px)").matches);
   const [isTablet, setIsTablet] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:481px) and (max-width:1024px)").matches);
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
 
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
-  const [users, setUsers] = useState([]);
-  const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "operator", isValidated: false });
-  const [editingUserId, setEditingUserId] = useState(null);
   const [user, setUser] = useState(getStoredUser());
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
@@ -362,18 +357,6 @@ function App() {
 
   useEffect(() => { const t = setTimeout(() => setIsBooting(false), 900); return () => clearTimeout(t); }, []);
   useEffect(() => {
-    if (authReady) return;
-    api("/auth/setup-status")
-      .then((status) => {
-        setHasAdmin(Boolean(status.hasAdmin));
-        setMode(status.hasAdmin ? "login" : "setupAdmin");
-      })
-      .catch(() => {
-        setHasAdmin(true);
-        setMode("login");
-      });
-  }, [authReady]);
-  useEffect(() => {
     if (!authReady) return;
     getSnapshot().then((snapshot) => {
       if (snapshot) applySnapshot(snapshot);
@@ -424,10 +407,6 @@ function App() {
       setPreview(null);
     }
   }, [opForm, authReady, tariffs]);
-  useEffect(() => {
-    if (!authReady || user?.role !== "admin" || activePage !== "utilisateurs") return;
-    fetchUsers().catch((error) => setMessage(error.message));
-  }, [authReady, user?.role, activePage]);
 
   const onAuth = async (e) => {
     e.preventDefault();
@@ -435,83 +414,13 @@ function App() {
       if (!navigator.onLine) {
         throw new Error("Connexion internet requise pour la premiere authentification.");
       }
-      if (mode === "setupAdmin") {
-        const setup = await api("/auth/setup-admin", { method: "POST", body: JSON.stringify(authForm) });
-        saveToken(setup.token);
-        setToken(setup.token);
-        saveStoredUser(setup.user);
-        setUser(setup.user);
-        setHasAdmin(true);
-        setActivePage("utilisateurs");
-        return;
-      }
+      if (mode === "signup") await api("/auth/signup", { method: "POST", body: JSON.stringify(authForm) });
       const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: authForm.email, password: authForm.password }) });
       saveToken(login.token);
       setToken(login.token);
       const me = await api("/auth/me");
       saveStoredUser(me);
       setUser(me);
-      if (me?.role === "admin") setActivePage("utilisateurs");
-    } catch (error) {
-      if (error.setupRequired) {
-        setHasAdmin(false);
-        setMode("setupAdmin");
-      }
-      setMessage(error.message);
-    }
-  };
-
-  const fetchUsers = async () => {
-    const data = await api("/auth/users");
-    setUsers(Array.isArray(data) ? data : []);
-  };
-
-  const saveUser = async (e) => {
-    e.preventDefault();
-    try {
-      const payload = {
-        ...userForm,
-        password: userForm.password || undefined,
-        isValidated: userForm.role === "admin" ? true : Boolean(userForm.isValidated),
-      };
-      if (editingUserId) {
-        const updated = await api(`/auth/users/${editingUserId}`, { method: "PATCH", body: JSON.stringify(payload) });
-        setUsers((prev) => prev.map((item) => item.id === updated.id ? updated : item));
-      } else {
-        const created = await api("/auth/users", { method: "POST", body: JSON.stringify(payload) });
-        setUsers((prev) => [created, ...prev]);
-      }
-      setUserForm({ name: "", email: "", password: "", role: "operator", isValidated: false });
-      setEditingUserId(null);
-      setMessage(editingUserId ? "Utilisateur modifie." : "Utilisateur cree.");
-    } catch (error) {
-      setMessage(error.message);
-    }
-  };
-
-  const editUser = (item) => {
-    setEditingUserId(item.id);
-    setUserForm({ name: item.name, email: item.email, password: "", role: item.role, isValidated: Boolean(item.isValidated) });
-  };
-
-  const toggleUserStatus = async (item) => {
-    try {
-      const payload = item.isValidated && !item.isBlocked
-        ? { isBlocked: true }
-        : { isValidated: true, isBlocked: false };
-      const updated = await api(`/auth/users/${item.id}`, { method: "PATCH", body: JSON.stringify(payload) });
-      setUsers((prev) => prev.map((userItem) => userItem.id === updated.id ? updated : userItem));
-      setMessage(updated.isBlocked ? "Utilisateur bloque." : "Utilisateur valide.");
-    } catch (error) {
-      setMessage(error.message);
-    }
-  };
-
-  const deleteUser = async (id) => {
-    try {
-      await api(`/auth/users/${id}`, { method: "DELETE" });
-      setUsers((prev) => prev.filter((item) => item.id !== id));
-      setMessage("Utilisateur supprime.");
     } catch (error) {
       setMessage(error.message);
     }
@@ -992,12 +901,12 @@ function App() {
       <main className="auth-shell">
         <form className="auth-box" onSubmit={onAuth}>
           <h1>Cash Point</h1>
-          <p>{mode === "setupAdmin" ? "Creez le premier compte administrateur pour demarrer le systeme." : "Connexion a votre espace"}</p>
-          {mode === "setupAdmin" && <input placeholder="Nom complet administrateur" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
+          <p>Solution de gestion de caisse mobile</p>
+          {mode === "signup" && <input placeholder="Nom complet" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
           <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
           <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
-          <button type="submit" className="btn primary">{mode === "setupAdmin" ? "Creer l'administrateur" : "Connexion"}</button>
-          {hasAdmin === false && <small>Aucune autre fonctionnalite ne sera disponible tant que ce compte admin n'est pas cree.</small>}
+          <button type="submit" className="btn primary">{mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
+          <button type="button" className="btn quiet" onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>
           {message && <small>{message}</small>}
         </form>
       </main>
@@ -1027,18 +936,14 @@ function App() {
     tarifs: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2v20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 7h14M5 17h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
     ),
-    utilisateurs: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.5"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-    ),
   };
-  const navPages = Object.keys(pageMeta).filter((p) => p !== "utilisateurs" || user?.role === "admin");
 
   return (
     <main className={`app-shell ${sidebarOpen && isTablet ? "sidebar-open" : ""}`}>
       <aside className={`left-nav ${sidebarOpen ? "open" : "collapsed"} ${isPhone && sidebarOpen ? "mobile" : ""}`}>
         <div className="brand"><img src="/logo_cash.png" alt="logo" onClick={() => { if (!isDesktop) setSidebarOpen((s) => !s); }} /><div><strong>Cash Point</strong><span>{user?.name || "Utilisateur"}</span></div></div>
         <nav>
-          {navPages.map((p) => (
+          {Object.keys(pageMeta).map((p) => (
             <button
               key={p}
               data-title={pageMeta[p].title}
@@ -1436,54 +1341,6 @@ function App() {
                 <div className="journal-table-wrap"><table className="journal-list-table"><thead><tr><th>Jour</th><th>Initial Cash</th><th>Restant Cash</th><th>Initial Float</th><th>Restant Float</th><th>Réappro</th><th>Ops</th><th>Gain</th><th>Frais perso</th><th>Bonus</th></tr></thead><tbody>{selectedYearReport.days.map((d) => <tr key={d.dateKey || d.date}><td>{formatHistoryDate(d.date)}</td><td>{formatArPdf(d.totalInitialCash)}</td><td>{formatArPdf(d.totalFinalCash)}</td><td>{formatArPdf(d.totalInitialMobile)}</td><td>{formatArPdf(d.totalFinalMobile)}</td><td>{formatArPdf(d.totalReapproAmount)}</td><td>{d.totalOps}</td><td>{formatArPdf(d.totalGain)}</td><td>{formatArPdf(d.totalPersonalFee)}</td><td>{formatArPdf(Number(d.totalGain || 0) + Number(d.totalPersonalFee || 0))}</td></tr>)}</tbody></table></div>
               </>
             )}
-          </section>
-        )}
-
-        {activePage === "utilisateurs" && user?.role === "admin" && (
-          <section className="panel">
-            <div className="row between">
-              <div>
-                <h3>Dashboard administrateur</h3>
-                <p className="muted-line">Nombre d'utilisateurs: <strong>{users.length}</strong></p>
-              </div>
-              <button className="btn quiet" type="button" onClick={() => fetchUsers().catch((error) => setMessage(error.message))}>Actualiser</button>
-            </div>
-
-            <form className="admin-user-form" onSubmit={saveUser}>
-              <h3>{editingUserId ? "Modifier utilisateur" : "Creer un utilisateur"}</h3>
-              <div className="form-grid">
-                <label><span>Nom complet</span><input value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} /></label>
-                <label><span>Email</span><input value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} /></label>
-                <label><span>Mot de passe {editingUserId ? "(laisser vide pour garder)" : ""}</span><input type="password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} /></label>
-                <label><span>Role</span><select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value, isValidated: e.target.value === "admin" ? true : userForm.isValidated })}><option value="operator">Operateur</option><option value="admin">Admin</option></select></label>
-                <label className="checkbox-line">
-                  <input type="checkbox" checked={Boolean(userForm.isValidated)} disabled={userForm.role === "admin"} onChange={(e) => setUserForm({ ...userForm, isValidated: e.target.checked })} />
-                  <span>Utilisateur valide</span>
-                </label>
-              </div>
-              <div className="row">
-                <button className="btn primary" type="submit">{editingUserId ? "Enregistrer" : "Creer"}</button>
-                {editingUserId && <button className="btn quiet" type="button" onClick={() => { setEditingUserId(null); setUserForm({ name: "", email: "", password: "", role: "operator", isValidated: false }); }}>Annuler</button>}
-              </div>
-            </form>
-
-            <div className="admin-users-list">
-              {users.map((item) => (
-                <article className="admin-user-card" key={item.id}>
-                  <div>
-                    <strong>{item.name}</strong>
-                    <span>{item.email}</span>
-                    <small>{item.role === "admin" ? "Admin" : "Operateur"} - {item.isBlocked ? "Bloque" : item.isValidated ? "Valide" : "En attente"}</small>
-                  </div>
-                  <div className="row">
-                    <button className="btn quiet" type="button" onClick={() => editUser(item)}>Modifier</button>
-                    <button className={item.isValidated && !item.isBlocked ? "btn danger" : "btn primary"} type="button" onClick={() => toggleUserStatus(item)}>{item.isValidated && !item.isBlocked ? "Bloquer" : "Valider"}</button>
-                    <button className="btn danger" type="button" onClick={() => deleteUser(item.id)}>Supprimer</button>
-                  </div>
-                </article>
-              ))}
-              {!users.length && <p className="empty-row">Aucun utilisateur.</p>}
-            </div>
           </section>
         )}
 
