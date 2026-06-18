@@ -1113,21 +1113,6 @@ function App() {
               <button className="btn quiet" type="button" onClick={() => fetchAdminDashboard().catch((error) => setMessage(error.message))}>Actualiser</button>
             </div>
 
-            {editingAdminUserId && (
-              <form className="admin-user-form" onSubmit={saveAdminUser}>
-                <h3>Modifier utilisateur</h3>
-                <div className="form-grid">
-                  <label><span>Nom complet</span><input value={adminUserForm.name} onChange={(e) => setAdminUserForm({ ...adminUserForm, name: e.target.value })} /></label>
-                  <label><span>Email</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
-                  <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
-                </div>
-                <div className="row">
-                  <button className="btn primary" type="submit">Enregistrer</button>
-                  <button className="btn quiet" type="button" onClick={cancelAdminEdit}>Annuler</button>
-                </div>
-              </form>
-            )}
-
             <div className="admin-users-list">
               {(adminDashboard.users || []).map((item) => {
                 const statusText = item.isBlocked ? "Bloque" : item.isValidated ? "Valide" : "En attente";
@@ -1616,6 +1601,24 @@ function App() {
               </p>
             </div>
             <div className="row"><button type="button" className="btn quiet" onClick={() => setShowOperationForm(false)}>Annuler</button><button type="submit" className="btn primary">Enregistrer</button></div>
+          </form>
+        </div>
+      )}
+
+      {editingAdminUserId && (
+        <div className="overlay" onClick={cancelAdminEdit}>
+          <form className="dialog admin-user-dialog" onClick={(e) => e.stopPropagation()} onSubmit={saveAdminUser}>
+            <h3>Modifier utilisateur</h3>
+            <p>Changez les informations du compte utilisateur.</p>
+            <div className="form-grid">
+              <label><span>Nom complet</span><input value={adminUserForm.name} onChange={(e) => setAdminUserForm({ ...adminUserForm, name: e.target.value })} /></label>
+              <label><span>Email</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
+              <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
+            </div>
+            <div className="row">
+              <button type="button" className="btn quiet" onClick={cancelAdminEdit}>Annuler</button>
+              <button type="submit" className="btn primary">Enregistrer</button>
+            </div>
           </form>
         </div>
       )}

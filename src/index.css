@@ -595,16 +595,9 @@ label span { color: var(--muted); }
   align-content: start;
 }
 
-.admin-user-form {
-  display: grid;
-  gap: 0.7rem;
-  padding: 0.85rem;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
+.admin-user-dialog {
+  width: min(520px, 100%);
 }
-
-.admin-user-form h3 { margin: 0; }
 
 .admin-users-list {
   display: grid;
