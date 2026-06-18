@@ -27,6 +27,7 @@ const pageMeta = {
   caisse: { title: "Pilotage caisse", subtitle: "Cash et float par operateur" },
   rapport: { title: "Rapports", subtitle: "Indicateurs de performance" },
   tarifs: { title: "Regles tarifaires", subtitle: "Commissions et frais" },
+  admin: { title: "Dashboard admin", subtitle: "Validation et suivi des utilisateurs" },
 };
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
 const formatArPdf = (v) => `${Number(v || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ")} Ar`;
@@ -165,12 +166,18 @@ function App() {
   const [activePage, setActivePage] = useState("accueil");
   const [mode, setMode] = useState("login");
   const [message, setMessage] = useState("");
+  const [hasAdmin, setHasAdmin] = useState(null);
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:1025px)").matches);
   const [isTablet, setIsTablet] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:481px) and (max-width:1024px)").matches);
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
 
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
   const [user, setUser] = useState(getStoredUser());
+  const [adminDashboard, setAdminDashboard] = useState({ totalUsers: 0, validatedUsers: 0, blockedUsers: 0, users: [] });
+  const [adminSearch, setAdminSearch] = useState("");
+  const [adminStatusFilter, setAdminStatusFilter] = useState("all");
+  const [adminUserForm, setAdminUserForm] = useState({ name: "", email: "", password: "" });
+  const [editingAdminUserId, setEditingAdminUserId] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
   const [history, setHistory] = useState([]);
@@ -211,6 +218,7 @@ function App() {
   const [selectedYearReport, setSelectedYearReport] = useState(null);
 
   const authReady = Boolean(token);
+  const isAdmin = user?.accountType === "admin";
   const filteredHistory = useMemo(() => {
     const filter = historyFilter.trim().toLowerCase();
     if (!filter) return history;
@@ -357,11 +365,23 @@ function App() {
 
   useEffect(() => { const t = setTimeout(() => setIsBooting(false), 900); return () => clearTimeout(t); }, []);
   useEffect(() => {
-    if (!authReady) return;
+    if (authReady) return;
+    api("/auth/admin-status")
+      .then((status) => {
+        setHasAdmin(Boolean(status.hasAdmin));
+        setMode(status.hasAdmin ? "login" : "setupAdmin");
+      })
+      .catch(() => {
+        setHasAdmin(true);
+        setMode("login");
+      });
+  }, [authReady]);
+  useEffect(() => {
+    if (!authReady || isAdmin) return;
     getSnapshot().then((snapshot) => {
       if (snapshot) applySnapshot(snapshot);
     }).catch(() => {});
-  }, [authReady]);
+  }, [authReady, isAdmin]);
   useEffect(() => {
     const on = () => setIsOnline(true);
     const off = () => setIsOnline(false);
@@ -390,8 +410,13 @@ function App() {
     };
   }, []);
 
-  useEffect(() => { if (!authReady) return; fetchAll().catch(() => {}); trySync().catch(() => {}); }, [authReady, period]);
-  useEffect(() => { if (!authReady || !isOnline) return; trySync().then(fetchAll).catch(() => {}); }, [authReady, isOnline]);
+  useEffect(() => { if (!authReady || isAdmin) return; fetchAll().catch(() => {}); trySync().catch(() => {}); }, [authReady, isAdmin, period]);
+  useEffect(() => { if (!authReady || isAdmin || !isOnline) return; trySync().then(fetchAll).catch(() => {}); }, [authReady, isAdmin, isOnline]);
+  useEffect(() => {
+    if (!authReady || !isAdmin) return;
+    if (activePage !== "admin") setActivePage("admin");
+    fetchAdminDashboard().catch((error) => setMessage(error.message));
+  }, [authReady, isAdmin, activePage, adminSearch, adminStatusFilter]);
   useEffect(() => {
     setSelectedJournalDay(null);
     setSelectedWeekReport(null);
@@ -414,13 +439,97 @@ function App() {
       if (!navigator.onLine) {
         throw new Error("Connexion internet requise pour la premiere authentification.");
       }
-      if (mode === "signup") await api("/auth/signup", { method: "POST", body: JSON.stringify(authForm) });
+      if (mode === "setupAdmin") {
+        const setup = await api("/auth/setup-admin", { method: "POST", body: JSON.stringify(authForm) });
+        saveToken(setup.token);
+        setToken(setup.token);
+        const me = await api("/auth/me");
+        saveStoredUser(me);
+        setUser(me);
+        setHasAdmin(true);
+        setActivePage("admin");
+        return;
+      }
+      if (mode === "signup") {
+        const signup = await api("/auth/signup", { method: "POST", body: JSON.stringify(authForm) });
+        setMode("login");
+        setMessage(signup.message || "Compte cree. En attente de validation par l'administrateur.");
+        return;
+      }
       const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: authForm.email, password: authForm.password }) });
       saveToken(login.token);
       setToken(login.token);
       const me = await api("/auth/me");
       saveStoredUser(me);
       setUser(me);
+      setActivePage(me?.accountType === "admin" ? "admin" : "accueil");
+    } catch (error) {
+      if (error.setupRequired) {
+        setHasAdmin(false);
+        setMode("setupAdmin");
+      }
+      setMessage(error.message);
+    }
+  };
+
+  const fetchAdminDashboard = async () => {
+    const params = new URLSearchParams();
+    if (adminSearch.trim()) params.set("search", adminSearch.trim());
+    if (adminStatusFilter !== "all") params.set("status", adminStatusFilter);
+    const query = params.toString();
+    const data = await api(`/auth/admin/dashboard${query ? `?${query}` : ""}`);
+    setAdminDashboard(data);
+  };
+
+  const editAdminUser = (item) => {
+    setEditingAdminUserId(item.id);
+    setAdminUserForm({ name: item.name || "", email: item.email || "", password: "" });
+  };
+
+  const cancelAdminEdit = () => {
+    setEditingAdminUserId(null);
+    setAdminUserForm({ name: "", email: "", password: "" });
+  };
+
+  const saveAdminUser = async (e) => {
+    e.preventDefault();
+    if (!editingAdminUserId) return;
+    try {
+      await api(`/auth/admin/users/${editingAdminUserId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: adminUserForm.name,
+          email: adminUserForm.email,
+          password: adminUserForm.password || undefined,
+        }),
+      });
+      cancelAdminEdit();
+      await fetchAdminDashboard();
+      setMessage("Utilisateur modifie.");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const updateAdminUserStatus = async (item, action) => {
+    try {
+      const payload = action === "validate"
+        ? { isValidated: true, isBlocked: false }
+        : { isValidated: false, isBlocked: true };
+      await api(`/auth/admin/users/${item.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      await fetchAdminDashboard();
+      setMessage(action === "validate" ? "Utilisateur valide." : "Utilisateur bloque.");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
+  const deleteAdminUser = async (id) => {
+    try {
+      await api(`/auth/admin/users/${id}`, { method: "DELETE" });
+      if (editingAdminUserId === id) cancelAdminEdit();
+      await fetchAdminDashboard();
+      setMessage("Utilisateur supprime.");
     } catch (error) {
       setMessage(error.message);
     }
@@ -901,12 +1010,13 @@ function App() {
       <main className="auth-shell">
         <form className="auth-box" onSubmit={onAuth}>
           <h1>Cash Point</h1>
-          <p>Solution de gestion de caisse mobile</p>
-          {mode === "signup" && <input placeholder="Nom complet" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
+          <p>{mode === "setupAdmin" ? "Creez le premier compte administrateur pour demarrer le systeme." : "Solution de gestion de caisse mobile"}</p>
+          {(mode === "signup" || mode === "setupAdmin") && <input placeholder={mode === "setupAdmin" ? "Nom complet administrateur" : "Nom complet"} value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
           <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
           <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
-          <button type="submit" className="btn primary">{mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
-          <button type="button" className="btn quiet" onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>
+          <button type="submit" className="btn primary">{mode === "setupAdmin" ? "Creer l'administrateur" : mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
+          {mode !== "setupAdmin" && <button type="button" className="btn quiet" onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>}
+          {hasAdmin === false && <small>Aucune fonctionnalite ne sera disponible tant que le compte administrateur n'est pas cree.</small>}
           {message && <small>{message}</small>}
         </form>
       </main>
@@ -936,14 +1046,18 @@ function App() {
     tarifs: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2v20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 7h14M5 17h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
     ),
+    admin: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.5"/><path d="M19 8v6M16 11h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+    ),
   };
+  const visiblePages = isAdmin ? ["admin"] : Object.keys(pageMeta).filter((p) => p !== "admin");
 
   return (
     <main className={`app-shell ${sidebarOpen && isTablet ? "sidebar-open" : ""}`}>
       <aside className={`left-nav ${sidebarOpen ? "open" : "collapsed"} ${isPhone && sidebarOpen ? "mobile" : ""}`}>
         <div className="brand"><img src="/logo_cash.png" alt="logo" onClick={() => { if (!isDesktop) setSidebarOpen((s) => !s); }} /><div><strong>Cash Point</strong><span>{user?.name || "Utilisateur"}</span></div></div>
         <nav>
-          {Object.keys(pageMeta).map((p) => (
+          {visiblePages.map((p) => (
             <button
               key={p}
               data-title={pageMeta[p].title}
@@ -973,7 +1087,73 @@ function App() {
           <button className="btn primary" onClick={openOperationModal}>+ Nouvelle operation</button>
         </header>
 
-        {activePage === "accueil" && (
+        {activePage === "admin" && isAdmin && (
+          <section className="panel admin-panel">
+            <div className="view-grid four">
+              <article className="kpi card-ink"><h3>Utilisateurs inscrits</h3><strong>{adminDashboard.totalUsers || 0}</strong></article>
+              <article className="kpi card-soft"><h3>Utilisateurs valides</h3><strong>{adminDashboard.validatedUsers || 0}</strong></article>
+              <article className="kpi card-soft"><h3>Utilisateurs bloques</h3><strong>{adminDashboard.blockedUsers || 0}</strong></article>
+              <article className="kpi card-soft"><h3>En attente</h3><strong>{Math.max(0, Number(adminDashboard.totalUsers || 0) - Number(adminDashboard.validatedUsers || 0) - Number(adminDashboard.blockedUsers || 0))}</strong></article>
+            </div>
+
+            <div className="row report-tools">
+              <label className="search-field">
+                <span>Recherche nom ou email</span>
+                <input value={adminSearch} onChange={(e) => setAdminSearch(e.target.value)} placeholder="Nom ou email" />
+              </label>
+              <label>
+                <span>Etat du compte</span>
+                <select value={adminStatusFilter} onChange={(e) => setAdminStatusFilter(e.target.value)}>
+                  <option value="all">Tous</option>
+                  <option value="pending">En attente</option>
+                  <option value="validated">Valide</option>
+                  <option value="blocked">Bloque</option>
+                </select>
+              </label>
+              <button className="btn quiet" type="button" onClick={() => fetchAdminDashboard().catch((error) => setMessage(error.message))}>Actualiser</button>
+            </div>
+
+            {editingAdminUserId && (
+              <form className="admin-user-form" onSubmit={saveAdminUser}>
+                <h3>Modifier utilisateur</h3>
+                <div className="form-grid">
+                  <label><span>Nom complet</span><input value={adminUserForm.name} onChange={(e) => setAdminUserForm({ ...adminUserForm, name: e.target.value })} /></label>
+                  <label><span>Email</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
+                  <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
+                </div>
+                <div className="row">
+                  <button className="btn primary" type="submit">Enregistrer</button>
+                  <button className="btn quiet" type="button" onClick={cancelAdminEdit}>Annuler</button>
+                </div>
+              </form>
+            )}
+
+            <div className="admin-users-list">
+              {(adminDashboard.users || []).map((item) => {
+                const statusText = item.isBlocked ? "Bloque" : item.isValidated ? "Valide" : "En attente";
+                return (
+                  <article className="admin-user-card" key={item.id}>
+                    <div>
+                      <strong>{item.name}</strong>
+                      <span>{item.email}</span>
+                      <small>Compte: {statusText}</small>
+                    </div>
+                    <div className="row">
+                      <button className="btn quiet" type="button" onClick={() => editAdminUser(item)}>Modifier</button>
+                      {!item.isValidated || item.isBlocked
+                        ? <button className="btn primary" type="button" onClick={() => updateAdminUserStatus(item, "validate")}>Valider</button>
+                        : <button className="btn danger" type="button" onClick={() => updateAdminUserStatus(item, "block")}>Bloquer</button>}
+                      <button className="btn danger" type="button" onClick={() => deleteAdminUser(item.id)}>Supprimer</button>
+                    </div>
+                  </article>
+                );
+              })}
+              {!(adminDashboard.users || []).length && <p className="empty-row">Aucun utilisateur trouve.</p>}
+            </div>
+          </section>
+        )}
+
+        {activePage === "accueil" && !isAdmin && (
           <section className="view-grid">
             <article className="kpi card-ink kpi-merged">
               <div><h3>Gain total</h3><strong>{formatArPdf(dashboard?.totalGain || 0)}</strong><span>{dashboard?.operationCount || 0} operations</span></div>

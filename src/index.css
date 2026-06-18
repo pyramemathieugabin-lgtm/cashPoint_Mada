@@ -591,6 +591,47 @@ label span { color: var(--muted); }
   margin: 6px 0;
 }
 
+.admin-panel {
+  align-content: start;
+}
+
+.admin-user-form {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-user-form h3 { margin: 0; }
+
+.admin-users-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.admin-user-card {
+  display: flex;
+  gap: 0.8rem;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.8rem;
+  border: 1px solid #253654;
+  border-radius: 14px;
+  background: #111a2a;
+}
+
+.admin-user-card > div:first-child {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.admin-user-card span,
+.admin-user-card small {
+  color: var(--muted);
+}
+
 .extra-fee-note {
   color: #7fffd4;
   font-weight: 600;
@@ -663,4 +704,8 @@ label span { color: var(--muted); }
   .report-kpis { grid-template-columns: 1fr; }
   .btn { width: 100%; }
   .row.between { align-items: stretch; }
+  .admin-user-card {
+    display: grid;
+    align-items: stretch;
+  }
 }
