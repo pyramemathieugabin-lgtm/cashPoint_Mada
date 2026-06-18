@@ -82,7 +82,12 @@ export async function api(path, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data?.message || `Erreur API (${response.status})`);
+    const error = new Error(data?.message || `Erreur API (${response.status})`);
+    if (data && typeof data === "object") {
+      Object.assign(error, data);
+    }
+    error.status = response.status;
+    throw error;
   }
   return data !== null && typeof data === "object" ? data : {};
 }

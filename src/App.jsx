@@ -144,6 +144,7 @@ const buildLocalJournal = (history, closingBalances, createdAt) => {
     date,
     dateKey,
     operators: operatorsSummary,
+    operations: dayItems,
     totalInitialCash: operatorsSummary.reduce((sum, item) => sum + item.openingInitialCash, 0),
     totalInitialMobile: operatorsSummary.reduce((sum, item) => sum + item.openingInitialMobile, 0),
     totalFinalCash: operatorsSummary.reduce((sum, item) => sum + item.closingFinalCash, 0),
@@ -151,6 +152,7 @@ const buildLocalJournal = (history, closingBalances, createdAt) => {
     totalOps: operatorsSummary.reduce((sum, item) => sum + item.txCount, 0),
     totalGain: operatorsSummary.reduce((sum, item) => sum + item.gain, 0),
     totalPersonalFee: operatorsSummary.reduce((sum, item) => sum + item.personalFee, 0),
+    totalBonus: operatorsSummary.reduce((sum, item) => sum + item.gain + item.personalFee, 0),
     totalReapproAmount: operatorsSummary.reduce((sum, item) => sum + item.reapproCashAmount + item.reapproMobileAmount, 0),
     isPendingSync: true,
   };
@@ -168,6 +170,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
 
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [verificationCode, setVerificationCode] = useState("");
   const [user, setUser] = useState(getStoredUser());
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
@@ -286,7 +289,7 @@ function App() {
       return;
     }
     try {
-      const [me, dash, cash, tariffList, hist, journalsList] = await Promise.all([
+      const [me, dash, cash, tariffList, hist, journalSummaries] = await Promise.all([
         api("/auth/me"),
         api("/dashboard"),
         api("/cashbox"),
@@ -294,6 +297,21 @@ function App() {
         api(`/operations/history?period=${period}`),
         api("/cashbox/journals"),
       ]);
+      const journalsList = await Promise.all(
+        (Array.isArray(journalSummaries) ? journalSummaries : []).map(async (journal) => {
+          if (Array.isArray(journal.operations)) return journal;
+          const cachedJournal = journals.find((item) => item.dateKey === journal.dateKey);
+          if (Array.isArray(cachedJournal?.operations)) {
+            return { ...cachedJournal, ...journal, operations: cachedJournal.operations };
+          }
+          try {
+            const detail = await api(`/cashbox/journals/day/${journal.dateKey}`);
+            return { ...journal, ...detail, dateKey: journal.dateKey };
+          } catch {
+            return journal;
+          }
+        })
+      );
       setUser(me);
       setDashboard(dash);
       setBalances(cash.operators || []);
@@ -324,9 +342,9 @@ function App() {
     for (const req of queuedRequests) {
       try {
         if (req.type === "operation") {
-          await api("/operations", { method: "POST", body: JSON.stringify(req.payload) });
+          await api("/operations", { method: "POST", body: JSON.stringify({ ...req.payload, offlineCreatedAt: req.createdAt }) });
         } else {
-          await api(req.path, { method: req.method, body: JSON.stringify(req.body || {}) });
+          await api(req.path, { method: req.method, body: JSON.stringify({ ...(req.body || {}), offlineCreatedAt: req.createdAt }) });
         }
         await removeQueuedRequest(req.id);
       } catch (error) {
@@ -397,14 +415,37 @@ function App() {
       if (!navigator.onLine) {
         throw new Error("Connexion internet requise pour la premiere authentification.");
       }
-      if (mode === "signup") await api("/auth/signup", { method: "POST", body: JSON.stringify({ ...authForm, role: "admin" }) });
+      if (mode === "signup") {
+        const response = await api("/auth/signup", { method: "POST", body: JSON.stringify({ ...authForm, role: "admin" }) });
+        setMode("verify");
+        setMessage(response.message || "Code de confirmation envoye par email.");
+        return;
+      }
+      if (mode === "verify") {
+        await api("/auth/verify-email", { method: "POST", body: JSON.stringify({ email: authForm.email, code: verificationCode }) });
+      }
       const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: authForm.email, password: authForm.password }) });
       saveToken(login.token);
       setToken(login.token);
       const me = await api("/auth/me");
       saveStoredUser(me);
       setUser(me);
-    } catch (error) { setMessage(error.message); }
+    } catch (error) {
+      if (error.requiresVerification) setMode("verify");
+      setMessage(error.message);
+    }
+  };
+
+  const resendVerificationCode = async () => {
+    try {
+      if (!navigator.onLine) {
+        throw new Error("Connexion internet requise pour renvoyer le code.");
+      }
+      const response = await api("/auth/resend-verification", { method: "POST", body: JSON.stringify({ email: authForm.email }) });
+      setMessage(response.message || "Nouveau code envoye.");
+    } catch (error) {
+      setMessage(error.message);
+    }
   };
 
   const saveTariff = async (e) => {
@@ -469,6 +510,7 @@ function App() {
         kind: "TRANSACTION",
         amount: payload.amount,
         createdAt,
+        canCancel: true,
         isPendingSync: true,
       };
       const nextHistory = [offlineOperation, ...history];
@@ -621,23 +663,39 @@ function App() {
   };
 
   const openJournalDay = async (dateValue) => {
+    const openLocalJournal = () => {
+      const journal = journals.find((item) => item.dateKey === dateValue);
+      if (!journal) throw new Error("Detail local introuvable pour cette journee.");
+      const operations = Array.isArray(journal.operations)
+        ? journal.operations
+        : history.filter((item) => String(item.createdAt || "").slice(0, 10) === dateValue);
+      setSelectedJournalDay({
+        ...journal,
+        date: dateValue,
+        totalBonus: Number(journal.totalBonus ?? (Number(journal.totalGain || 0) + Number(journal.totalPersonalFee || 0))),
+        operations,
+      });
+    };
+
     try {
       if (!navigator.onLine) {
-        const journal = journals.find((item) => item.dateKey === dateValue);
-        if (!journal) throw new Error("Detail local introuvable pour cette journee.");
-        const operations = history.filter((item) => String(item.createdAt || "").slice(0, 10) === dateValue);
-        setSelectedJournalDay({
-          ...journal,
-          date: dateValue,
-          totalBonus: Number(journal.totalGain || 0) + Number(journal.totalPersonalFee || 0),
-          operations,
-        });
+        openLocalJournal();
         return;
       }
       const day = await api(`/cashbox/journals/day/${dateValue}`);
       setSelectedJournalDay(day);
+      const nextJournals = journals.map((item) => item.dateKey === dateValue
+        ? { ...item, ...day, dateKey: dateValue }
+        : item);
+      setJournals(nextJournals);
+      await persistSnapshot({ journalsList: nextJournals });
     } catch (error) {
-      setMessage(error.message);
+      try {
+        openLocalJournal();
+        setMessage("Detail affiche depuis les donnees hors ligne.");
+      } catch {
+        setMessage(error.message);
+      }
     }
   };
 
@@ -868,9 +926,22 @@ function App() {
           <p>Solution de gestion de caisse mobile</p>
           {mode === "signup" && <input placeholder="Nom complet" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
           <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
-          <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
-          <button type="submit" className="btn primary">{mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
-          <button type="button" className="btn quiet" onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>
+          {mode !== "verify" && <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />}
+          {mode === "verify" && (
+            <>
+              <input
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="Code de confirmation a 6 chiffres"
+                value={verificationCode}
+                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              />
+              <small>Entrez le code envoye a votre adresse email.</small>
+            </>
+          )}
+          <button type="submit" className="btn primary">{mode === "signup" ? "Creer mon compte" : mode === "verify" ? "Confirmer mon email" : "Connexion"}</button>
+          {mode === "verify" && <button type="button" className="btn quiet" onClick={resendVerificationCode}>Renvoyer le code</button>}
+          <button type="button" className="btn quiet" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "signup" || mode === "verify" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>
           {message && <small>{message}</small>}
         </form>
       </main>
