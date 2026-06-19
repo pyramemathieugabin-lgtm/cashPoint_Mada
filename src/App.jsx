@@ -171,12 +171,12 @@ function App() {
   const [isTablet, setIsTablet] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:481px) and (max-width:1024px)").matches);
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
 
-  const [authForm, setAuthForm] = useState({ name: "", email: "", phone: "", password: "" });
+  const [authForm, setAuthForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "" });
   const [user, setUser] = useState(getStoredUser());
   const [adminDashboard, setAdminDashboard] = useState({ totalUsers: 0, validatedUsers: 0, blockedUsers: 0, users: [] });
   const [adminSearch, setAdminSearch] = useState("");
   const [adminStatusFilter, setAdminStatusFilter] = useState("all");
-  const [adminUserForm, setAdminUserForm] = useState({ name: "", email: "", phone: "", password: "" });
+  const [adminUserForm, setAdminUserForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "" });
   const [editingAdminUserId, setEditingAdminUserId] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
@@ -440,6 +440,7 @@ function App() {
         throw new Error("Connexion internet requise pour la premiere authentification.");
       }
       if (mode === "setupAdmin") {
+        if (authForm.password !== authForm.confirmPassword) throw new Error("Les mots de passe ne correspondent pas.");
         const setup = await api("/auth/setup-admin", { method: "POST", body: JSON.stringify(authForm) });
         saveToken(setup.token);
         setToken(setup.token);
@@ -451,6 +452,7 @@ function App() {
         return;
       }
       if (mode === "signup") {
+        if (authForm.password !== authForm.confirmPassword) throw new Error("Les mots de passe ne correspondent pas.");
         const signup = await api("/auth/signup", { method: "POST", body: JSON.stringify(authForm) });
         setMode("login");
         setMessage(signup.message || "Compte cree. En attente de validation par l'administrateur.");
@@ -483,18 +485,21 @@ function App() {
 
   const editAdminUser = (item) => {
     setEditingAdminUserId(item.id);
-    setAdminUserForm({ name: item.name || "", email: item.email || "", phone: item.phone || "", password: "" });
+    setAdminUserForm({ name: item.name || "", email: item.email || "", phone: item.phone || "", password: "", confirmPassword: "" });
   };
 
   const cancelAdminEdit = () => {
     setEditingAdminUserId(null);
-    setAdminUserForm({ name: "", email: "", phone: "", password: "" });
+    setAdminUserForm({ name: "", email: "", phone: "", password: "", confirmPassword: "" });
   };
 
   const saveAdminUser = async (e) => {
     e.preventDefault();
     if (!editingAdminUserId) return;
     try {
+      if (adminUserForm.password || adminUserForm.confirmPassword) {
+        if (adminUserForm.password !== adminUserForm.confirmPassword) throw new Error("Les mots de passe ne correspondent pas.");
+      }
       await api(`/auth/admin/users/${editingAdminUserId}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -502,6 +507,7 @@ function App() {
           email: adminUserForm.email,
           phone: adminUserForm.phone,
           password: adminUserForm.password || undefined,
+          confirmPassword: adminUserForm.confirmPassword || undefined,
         }),
       });
       cancelAdminEdit();
@@ -1016,6 +1022,7 @@ function App() {
           <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
           {mode === "signup" && <input placeholder="Numero telephone" value={authForm.phone} onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })} />}
           <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
+          {(mode === "signup" || mode === "setupAdmin") && <input type="password" placeholder="Confirmer mot de passe" value={authForm.confirmPassword} onChange={(e) => setAuthForm({ ...authForm, confirmPassword: e.target.value })} />}
           <button type="submit" className="btn primary">{mode === "setupAdmin" ? "Creer l'administrateur" : mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
           {mode !== "setupAdmin" && <button type="button" className="btn quiet" onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>}
           {hasAdmin === false && <small>Aucune fonctionnalite ne sera disponible tant que le compte administrateur n'est pas cree.</small>}
@@ -1618,6 +1625,7 @@ function App() {
               <label><span>Email</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
               <label><span>Numero telephone</span><input value={adminUserForm.phone} onChange={(e) => setAdminUserForm({ ...adminUserForm, phone: e.target.value })} /></label>
               <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
+              <label><span>Confirmer nouveau mot de passe</span><input type="password" value={adminUserForm.confirmPassword} onChange={(e) => setAdminUserForm({ ...adminUserForm, confirmPassword: e.target.value })} /></label>
             </div>
             <div className="row">
               <button type="button" className="btn quiet" onClick={cancelAdminEdit}>Annuler</button>
