@@ -171,12 +171,12 @@ function App() {
   const [isTablet, setIsTablet] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:481px) and (max-width:1024px)").matches);
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
 
-  const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [authForm, setAuthForm] = useState({ name: "", email: "", phone: "", password: "" });
   const [user, setUser] = useState(getStoredUser());
   const [adminDashboard, setAdminDashboard] = useState({ totalUsers: 0, validatedUsers: 0, blockedUsers: 0, users: [] });
   const [adminSearch, setAdminSearch] = useState("");
   const [adminStatusFilter, setAdminStatusFilter] = useState("all");
-  const [adminUserForm, setAdminUserForm] = useState({ name: "", email: "", password: "" });
+  const [adminUserForm, setAdminUserForm] = useState({ name: "", email: "", phone: "", password: "" });
   const [editingAdminUserId, setEditingAdminUserId] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
@@ -483,12 +483,12 @@ function App() {
 
   const editAdminUser = (item) => {
     setEditingAdminUserId(item.id);
-    setAdminUserForm({ name: item.name || "", email: item.email || "", password: "" });
+    setAdminUserForm({ name: item.name || "", email: item.email || "", phone: item.phone || "", password: "" });
   };
 
   const cancelAdminEdit = () => {
     setEditingAdminUserId(null);
-    setAdminUserForm({ name: "", email: "", password: "" });
+    setAdminUserForm({ name: "", email: "", phone: "", password: "" });
   };
 
   const saveAdminUser = async (e) => {
@@ -500,6 +500,7 @@ function App() {
         body: JSON.stringify({
           name: adminUserForm.name,
           email: adminUserForm.email,
+          phone: adminUserForm.phone,
           password: adminUserForm.password || undefined,
         }),
       });
@@ -1013,6 +1014,7 @@ function App() {
           <p>{mode === "setupAdmin" ? "Creez le premier compte administrateur pour demarrer le systeme." : "Solution de gestion de caisse mobile"}</p>
           {(mode === "signup" || mode === "setupAdmin") && <input placeholder={mode === "setupAdmin" ? "Nom complet administrateur" : "Nom complet"} value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
           <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
+          {mode === "signup" && <input placeholder="Numero telephone" value={authForm.phone} onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })} />}
           <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
           <button type="submit" className="btn primary">{mode === "setupAdmin" ? "Creer l'administrateur" : mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
           {mode !== "setupAdmin" && <button type="button" className="btn quiet" onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "J'ai deja un compte" : "Ouvrir un compte"}</button>}
@@ -1121,6 +1123,7 @@ function App() {
                     <div>
                       <strong>{item.name}</strong>
                       <span>{item.email}</span>
+                      <span>{item.phone || "Telephone non renseigne"}</span>
                       <small>Compte: {statusText}</small>
                     </div>
                     <div className="row">
@@ -1613,6 +1616,7 @@ function App() {
             <div className="form-grid">
               <label><span>Nom complet</span><input value={adminUserForm.name} onChange={(e) => setAdminUserForm({ ...adminUserForm, name: e.target.value })} /></label>
               <label><span>Email</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
+              <label><span>Numero telephone</span><input value={adminUserForm.phone} onChange={(e) => setAdminUserForm({ ...adminUserForm, phone: e.target.value })} /></label>
               <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
             </div>
             <div className="row">
