@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { Capacitor } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 import {
   api,
   queueOperation,
@@ -31,6 +34,7 @@ const pageMeta = {
 };
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
 const formatArPdf = (v) => `${Number(v || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ")} Ar`;
+const safeFilePart = (value) => String(value || "rapport").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "rapport";
 
 const areSameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const formatHistoryDate = (dateString) => {
@@ -793,8 +797,35 @@ function App() {
     }
   };
 
-  const exportDayDetailPdf = () => {
+  const savePdf = async (doc, filename) => {
+    const safeName = `${safeFilePart(String(filename || "rapport").replace(/\.pdf$/i, ""))}.pdf`;
+    if (!Capacitor.isNativePlatform()) {
+      doc.save(safeName);
+      return;
+    }
+
+    const dataUrl = doc.output("datauristring");
+    const base64Data = dataUrl.split(",")[1];
+    const result = await Filesystem.writeFile({
+      path: safeName,
+      data: base64Data,
+      directory: Directory.Documents,
+      recursive: true,
+    });
+
+    await Share.share({
+      title: safeName,
+      text: "Export PDF Cash Point",
+      url: result.uri,
+      dialogTitle: "Partager le PDF",
+    });
+    setMessage(`PDF genere: ${safeName}`);
+  };
+
+  const exportDayDetailPdf = async () => {
     if (!selectedJournalDay) return;
+    const journalOperators = Array.isArray(selectedJournalDay.operators) ? selectedJournalDay.operators : [];
+    const journalOperations = Array.isArray(selectedJournalDay.operations) ? selectedJournalDay.operations : [];
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     doc.setFontSize(16);
     doc.text(`Détail journée ${selectedJournalDay.date}`, 40, 38);
@@ -804,7 +835,7 @@ function App() {
     autoTable(doc, {
       startY: 74,
       head: [["Opérateur", "Initial Cash", "Restant Cash", "Initial Float", "Restant Float", "Réappro Cash", "Réappro Float"]],
-      body: selectedJournalDay.operators.map((op) => [
+      body: journalOperators.map((op) => [
         opLabel[op.operator],
         formatArPdf(op.openingInitialCash),
         formatArPdf(op.closingFinalCash),
@@ -818,7 +849,7 @@ function App() {
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 14,
       head: [["Heure", "Opérateur", "Type", "Montant", "Téléphone", "Client", "Référence", "Gain", "Statut"]],
-      body: selectedJournalDay.operations.map((h) => [
+      body: journalOperations.map((h) => [
         new Date(h.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
         opLabel[h.operator],
         h.kind === "TRANSACTION" ? `${typeLabel[h.operationType]} ${opLabel[h.operator]}` : h.kind,
@@ -831,11 +862,12 @@ function App() {
       ]),
     });
 
-    doc.save(`detail-jour-${selectedJournalDay.date}.pdf`);
+    await savePdf(doc, `detail-jour-${selectedJournalDay.date}.pdf`);
   };
 
-  const exportWeekDetailPdf = () => {
+  const exportWeekDetailPdf = async () => {
     if (!selectedWeekReport) return;
+    const reportDays = Array.isArray(selectedWeekReport.days) ? selectedWeekReport.days : [];
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     doc.setFontSize(16);
     doc.text(`${selectedWeekReport.label}`, 40, 38);
@@ -846,10 +878,10 @@ function App() {
       startY: 74,
       head: [["Opérateur", "Initial Cash", "Restant Cash", "Initial Float", "Restant Float", "Réappro Cash", "Réappro Float"]],
       body: operators.map((operator) => {
-        const first = selectedWeekReport.days[0]?.operators?.find((x) => x.operator === operator);
-        const last = selectedWeekReport.days[selectedWeekReport.days.length - 1]?.operators?.find((x) => x.operator === operator);
-        const reapproCash = selectedWeekReport.days.reduce((s, d) => s + Number(d.operators?.find((x) => x.operator === operator)?.reapproCashAmount || 0), 0);
-                    const reapproFloat = selectedWeekReport.days.reduce((s, d) => s + Number(d.operators?.find((x) => x.operator === operator)?.reapproMobileAmount || 0), 0);
+        const first = reportDays[0]?.operators?.find((x) => x.operator === operator);
+        const last = reportDays[reportDays.length - 1]?.operators?.find((x) => x.operator === operator);
+        const reapproCash = reportDays.reduce((s, d) => s + Number(d.operators?.find((x) => x.operator === operator)?.reapproCashAmount || 0), 0);
+        const reapproFloat = reportDays.reduce((s, d) => s + Number(d.operators?.find((x) => x.operator === operator)?.reapproMobileAmount || 0), 0);
         return [
           opLabel[operator],
           formatArPdf(first?.openingInitialCash),
@@ -865,7 +897,7 @@ function App() {
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 14,
       head: [["Jour", "Initial Cash", "Restant Cash", "Initial Float", "Restant Float", "Réappro", "Ops", "Gain", "Frais perso", "Bonus"]],
-      body: selectedWeekReport.days.map((d) => [
+      body: reportDays.map((d) => [
         formatHistoryDate(d.date),
         formatArPdf(d.totalInitialCash),
         formatArPdf(d.totalFinalCash),
@@ -879,7 +911,7 @@ function App() {
       ]),
     });
 
-    doc.save(`detail-semaine-${selectedWeekReport.key}.pdf`);
+    await savePdf(doc, `detail-semaine-${selectedWeekReport.key}.pdf`);
   };
 
   const reportData = useMemo(() => {
