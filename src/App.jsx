@@ -174,6 +174,7 @@ function App() {
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:1025px)").matches);
   const [isTablet, setIsTablet] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width:481px) and (max-width:1024px)").matches);
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
+  const [theme, setTheme] = useState(() => localStorage.getItem("cp_theme") || "dark");
 
   const [authForm, setAuthForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "" });
   const [user, setUser] = useState(getStoredUser());
@@ -369,6 +370,10 @@ function App() {
 
   useEffect(() => { const t = setTimeout(() => setIsBooting(false), 900); return () => clearTimeout(t); }, []);
   useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("cp_theme", theme);
+  }, [theme]);
+  useEffect(() => {
     if (authReady) return;
     api("/auth/admin-status")
       .then((status) => {
@@ -462,7 +467,7 @@ function App() {
         setMessage(signup.message || "Compte cree. En attente de validation par l'administrateur.");
         return;
       }
-      const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: authForm.email, password: authForm.password }) });
+      const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ identifier: authForm.email, password: authForm.password }) });
       saveToken(login.token);
       setToken(login.token);
       const me = await api("/auth/me");
@@ -1048,10 +1053,11 @@ function App() {
     return (
       <main className="auth-shell">
         <form className="auth-box" onSubmit={onAuth}>
+          <button type="button" className="btn quiet theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Mode clair" : "Mode sombre"}</button>
           <h1>Cash Point</h1>
           <p>{mode === "setupAdmin" ? "Creez le premier compte administrateur pour demarrer le systeme." : "Solution de gestion de caisse mobile"}</p>
           {(mode === "signup" || mode === "setupAdmin") && <input placeholder={mode === "setupAdmin" ? "Nom complet administrateur" : "Nom complet"} value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
-          <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
+          <input placeholder={mode === "login" ? "Email ou numero telephone" : mode === "signup" ? "Email (facultatif)" : "Email administrateur"} value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
           {mode === "signup" && <input placeholder="Numero telephone" value={authForm.phone} onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })} />}
           <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
           {(mode === "signup" || mode === "setupAdmin") && <input type="password" placeholder="Confirmer mot de passe" value={authForm.confirmPassword} onChange={(e) => setAuthForm({ ...authForm, confirmPassword: e.target.value })} />}
@@ -1115,6 +1121,7 @@ function App() {
         </nav>
         <div className="left-actions">
           <span className={`net ${isOnline ? "on" : "off"}`}>{isOnline ? "En ligne" : "Hors ligne"}</span>
+          <button className="btn quiet" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Mode clair" : "Mode sombre"}</button>
           <button className="btn quiet" onClick={() => { clearToken(); setToken(""); setUser(null); }}>Deconnexion</button>
         </div>
       </aside>
@@ -1161,7 +1168,7 @@ function App() {
                   <article className="admin-user-card" key={item.id}>
                     <div>
                       <strong>{item.name}</strong>
-                      <span>{item.email}</span>
+                      <span>{item.email || "Email non renseigne"}</span>
                       <span>{item.phone || "Telephone non renseigne"}</span>
                       <small>Compte: {statusText}</small>
                     </div>
@@ -1654,7 +1661,7 @@ function App() {
             <p>Changez les informations du compte utilisateur.</p>
             <div className="form-grid">
               <label><span>Nom complet</span><input value={adminUserForm.name} onChange={(e) => setAdminUserForm({ ...adminUserForm, name: e.target.value })} /></label>
-              <label><span>Email</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
+              <label><span>Email (facultatif)</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
               <label><span>Numero telephone</span><input value={adminUserForm.phone} onChange={(e) => setAdminUserForm({ ...adminUserForm, phone: e.target.value })} /></label>
               <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
               <label><span>Confirmer nouveau mot de passe</span><input type="password" value={adminUserForm.confirmPassword} onChange={(e) => setAdminUserForm({ ...adminUserForm, confirmPassword: e.target.value })} /></label>
