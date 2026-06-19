@@ -1132,7 +1132,7 @@ function App() {
             <h2>{pageMeta[activePage].title}</h2>
             <p>{pageMeta[activePage].subtitle}</p>
           </div>
-          <button className="btn primary" onClick={openOperationModal}>+ Nouvelle operation</button>
+          {!isAdmin && <button className="btn primary" onClick={openOperationModal}>+ Nouvelle operation</button>}
         </header>
 
         {activePage === "admin" && isAdmin && (
