@@ -125,6 +125,48 @@ const orangeTransferOperatorFees = [
   { minAmount: 8000001, maxAmount: 9000000, operatorFee: 3000 },
   { minAmount: 9000001, maxAmount: 10000000, operatorFee: 3000 },
 ];
+const airtelWithdrawalOperatorFees = [
+  { minAmount: 300, maxAmount: 1000, operatorFee: 150 },
+  { minAmount: 1001, maxAmount: 5000, operatorFee: 175 },
+  { minAmount: 5001, maxAmount: 10000, operatorFee: 350 },
+  { minAmount: 10001, maxAmount: 20000, operatorFee: 700 },
+  { minAmount: 20001, maxAmount: 25000, operatorFee: 700 },
+  { minAmount: 25001, maxAmount: 30000, operatorFee: 1500 },
+  { minAmount: 30001, maxAmount: 40000, operatorFee: 1500 },
+  { minAmount: 40001, maxAmount: 50000, operatorFee: 1500 },
+  { minAmount: 50001, maxAmount: 60000, operatorFee: 2000 },
+  { minAmount: 60001, maxAmount: 80000, operatorFee: 2000 },
+  { minAmount: 80001, maxAmount: 100000, operatorFee: 2000 },
+  { minAmount: 100001, maxAmount: 150000, operatorFee: 3500 },
+  { minAmount: 150001, maxAmount: 250000, operatorFee: 3500 },
+  { minAmount: 250001, maxAmount: 500000, operatorFee: 4800 },
+  { minAmount: 500001, maxAmount: 1000000, operatorFee: 9000 },
+  { minAmount: 1000001, maxAmount: 2000000, operatorFee: 15000 },
+  { minAmount: 2000001, maxAmount: 3000000, operatorFee: 20000 },
+  { minAmount: 3000001, maxAmount: 4000000, operatorFee: 25000 },
+  { minAmount: 4000001, maxAmount: 5000000, operatorFee: 30000 },
+];
+const airtelTransferOperatorFees = [
+  { minAmount: 300, maxAmount: 1000, operatorFee: 50 },
+  { minAmount: 1001, maxAmount: 5000, operatorFee: 50 },
+  { minAmount: 5001, maxAmount: 10000, operatorFee: 100 },
+  { minAmount: 10001, maxAmount: 20000, operatorFee: 200 },
+  { minAmount: 20001, maxAmount: 25000, operatorFee: 300 },
+  { minAmount: 25001, maxAmount: 30000, operatorFee: 300 },
+  { minAmount: 30001, maxAmount: 40000, operatorFee: 400 },
+  { minAmount: 40001, maxAmount: 50000, operatorFee: 600 },
+  { minAmount: 50001, maxAmount: 60000, operatorFee: 600 },
+  { minAmount: 60001, maxAmount: 80000, operatorFee: 800 },
+  { minAmount: 80001, maxAmount: 100000, operatorFee: 800 },
+  { minAmount: 100001, maxAmount: 150000, operatorFee: 1500 },
+  { minAmount: 150001, maxAmount: 250000, operatorFee: 1500 },
+  { minAmount: 250001, maxAmount: 500000, operatorFee: 1500 },
+  { minAmount: 500001, maxAmount: 1000000, operatorFee: 2500 },
+  { minAmount: 1000001, maxAmount: 2000000, operatorFee: 3000 },
+  { minAmount: 2000001, maxAmount: 3000000, operatorFee: 3000 },
+  { minAmount: 3000001, maxAmount: 4000000, operatorFee: 3000 },
+  { minAmount: 4000001, maxAmount: 5000000, operatorFee: 3000 },
+];
 const pageMeta = {
   accueil: { title: "Vue generale", subtitle: "Soldes et activite du jour" },
   historique: { title: "Journal", subtitle: "Mouvements recents" },
@@ -167,6 +209,8 @@ const getGuidedTariffFees = (operator, operationType) => {
   if (operator === "YAS" && operationType === "TRANSFERT") return mvolaTransferOperatorFees;
   if (operator === "ORANGE" && operationType === "RETRAIT") return orangeWithdrawalOperatorFees;
   if (operator === "ORANGE" && operationType === "TRANSFERT") return orangeTransferOperatorFees;
+  if (operator === "AIRTEL" && operationType === "RETRAIT") return airtelWithdrawalOperatorFees;
+  if (operator === "AIRTEL" && operationType === "TRANSFERT") return airtelTransferOperatorFees;
   return null;
 };
 const isGuidedTariff = (operator, operationType) => Boolean(getGuidedTariffFees(operator, operationType));
