@@ -120,6 +120,8 @@ const validateOperationPhone = (phone, operator) => {
   }
   return cleanPhone;
 };
+const isFreeOperatorFeeOperation = (operationType) => ["DEPOT", "CREDIT"].includes(operationType);
+const getEffectiveOperatorFee = (tariff) => isFreeOperatorFeeOperation(tariff.operationType) ? 0 : Number(tariff.operatorFee || 0);
 const getMvolaGuidedFees = (operationType) => {
   if (operationType === "RETRAIT") return mvolaWithdrawalOperatorFees;
   if (operationType === "TRANSFERT") return mvolaTransferOperatorFees;
@@ -171,7 +173,7 @@ const findLocalTariff = (tariffs, operator, operationType, amount) =>
 const calculateLocalValues = (tariffs, payload) => {
   const tariff = findLocalTariff(tariffs, payload.operator, payload.operationType, payload.amount);
   if (!tariff) throw new Error("Tarif introuvable. Connectez-vous une fois pour charger les tarifs.");
-  let operatorFee = Number(tariff.operatorFee || 0);
+  let operatorFee = isFreeOperatorFeeOperation(payload.operationType) ? 0 : Number(tariff.operatorFee || 0);
   let personalFee = Number(tariff.personalFee || 0);
   let gain = Number(tariff.gainCumule || 0);
   if (payload.operationType === "TRANSFERT" && payload.includeWithdrawalFeeForTransfer) {
@@ -707,6 +709,7 @@ function App() {
       }
       const tariffPayload = {
         ...tariffForm,
+        ...(isFreeOperatorFeeOperation(tariffForm.operationType) ? { operatorFee: 0 } : {}),
         ...(enforcedMvolaFee ? {
           minAmount: enforcedMvolaFee.minAmount,
           maxAmount: enforcedMvolaFee.maxAmount,
@@ -754,7 +757,7 @@ function App() {
   };
 
   const onEditTariff = (t) => {
-    setTariffForm({ operator: t.operator, operationType: t.operationType, minAmount: t.minAmount, maxAmount: t.maxAmount, operatorFee: t.operatorFee, personalFee: t.personalFee, gainCumule: t.gainCumule || 0 });
+    setTariffForm({ operator: t.operator, operationType: t.operationType, minAmount: t.minAmount, maxAmount: t.maxAmount, operatorFee: isFreeOperatorFeeOperation(t.operationType) ? 0 : t.operatorFee, personalFee: t.personalFee, gainCumule: t.gainCumule || 0 });
     setEditingTariffId(t.id);
     setShowTariffForm(true);
   };
@@ -1782,7 +1785,7 @@ function App() {
             </div>
             <div className="row">{types.map((t) => <button key={t} className={`btn ${tariffForm.operationType === t ? "primary" : "quiet"}`} onClick={() => setTariffForm({ ...tariffForm, operationType: t })}>{typeLabel[t]}</button>)}</div>
             <div className="row between"><strong>{opLabel[tariffForm.operator]} - {typeLabel[tariffForm.operationType]}</strong><button className="btn primary" onClick={openTariffForm}>Ajouter tranche</button></div>
-            <div className="list">{filteredTariffs.map((t) => <article className="tariff-row" key={t.id}><h4>{formatArPdf(t.minAmount)} a {formatArPdf(t.maxAmount)}</h4><p>Frais operateur: <strong>{formatArPdf(t.operatorFee)}</strong></p><p>Frais personnel: <strong>{formatArPdf(t.personalFee)}</strong></p><p>Gain cumulé: <strong>{formatArPdf(t.gainCumule || 0)}</strong></p><p>Frais client: <strong>{formatArPdf((t.operatorFee || 0) + (t.personalFee || 0))}</strong></p><div className="row"><button className="btn quiet" type="button" onClick={() => onEditTariff(t)}>Modifier</button><button className="btn danger" type="button" onClick={() => onDeleteTariff(t.id)}>Supprimer</button></div></article>)}</div>
+            <div className="list">{filteredTariffs.map((t) => <article className="tariff-row" key={t.id}><h4>{formatArPdf(t.minAmount)} a {formatArPdf(t.maxAmount)}</h4><p>Frais operateur: <strong>{formatArPdf(getEffectiveOperatorFee(t))}</strong></p><p>Frais personnel: <strong>{formatArPdf(t.personalFee)}</strong></p><p>Gain cumulé: <strong>{formatArPdf(t.gainCumule || 0)}</strong></p><p>Frais client: <strong>{formatArPdf(getEffectiveOperatorFee(t) + Number(t.personalFee || 0))}</strong></p><div className="row"><button className="btn quiet" type="button" onClick={() => onEditTariff(t)}>Modifier</button><button className="btn danger" type="button" onClick={() => onDeleteTariff(t.id)}>Supprimer</button></div></article>)}</div>
           </section>
         )}
 
@@ -1889,10 +1892,13 @@ function App() {
                 Renseignez seulement vos frais personnels et le gain cumule.
               </p>
             )}
+            {isFreeOperatorFeeOperation(tariffForm.operationType) && (
+              <p>Pour depot et credit, le frais operateur est toujours gratuit: 0 Ar.</p>
+            )}
             <div className="form-grid">
               <label><span>Min</span><input type="number" value={tariffForm.minAmount} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, minAmount: Number(e.target.value) })} /></label>
               <label><span>Max</span><input type="number" value={tariffForm.maxAmount} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, maxAmount: Number(e.target.value) })} /></label>
-              <label><span>Frais operateur</span><input type="number" value={tariffForm.operatorFee} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, operatorFee: Number(e.target.value) })} /></label>
+              <label><span>Frais operateur</span><input type="number" value={isFreeOperatorFeeOperation(tariffForm.operationType) ? 0 : tariffForm.operatorFee} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType) || isFreeOperatorFeeOperation(tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, operatorFee: Number(e.target.value) })} /></label>
               <label><span>Frais personnel</span><input type="number" value={tariffForm.personalFee} onChange={(e) => setTariffForm({ ...tariffForm, personalFee: Number(e.target.value) })} /></label>
               <label><span>Gain cumulé</span><input type="number" value={tariffForm.gainCumule} onChange={(e) => setTariffForm({ ...tariffForm, gainCumule: Number(e.target.value) })} /></label>
             </div>
