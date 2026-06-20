@@ -96,6 +96,30 @@ const pageMeta = {
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
 const formatArPdf = (v) => `${Number(v || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ")} Ar`;
 const safeFilePart = (value) => String(value || "rapport").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "rapport";
+const normalizePhoneInput = (value) => String(value || "").replace(/\D/g, "").slice(0, 10);
+const userPhonePrefixes = ["034", "038", "032", "037", "033"];
+const operatorPhonePrefixes = {
+  YAS: ["034", "038"],
+  ORANGE: ["032", "037"],
+  AIRTEL: ["033"],
+};
+const isValidPhoneForPrefixes = (phone, prefixes) => /^\d{10}$/.test(phone) && prefixes.some((prefix) => phone.startsWith(prefix));
+const validateUserPhone = (phone) => {
+  const cleanPhone = normalizePhoneInput(phone);
+  if (!isValidPhoneForPrefixes(cleanPhone, userPhonePrefixes)) {
+    throw new Error("Le numero telephone doit contenir 10 chiffres et commencer par 034, 038, 032, 037 ou 033.");
+  }
+  return cleanPhone;
+};
+const validateOperationPhone = (phone, operator) => {
+  const cleanPhone = normalizePhoneInput(phone);
+  const prefixes = operatorPhonePrefixes[operator] || userPhonePrefixes;
+  if (!isValidPhoneForPrefixes(cleanPhone, prefixes)) {
+    const labels = prefixes.join(" ou ");
+    throw new Error(`Le numero client ${opLabel[operator] || ""} doit contenir 10 chiffres et commencer par ${labels}.`);
+  }
+  return cleanPhone;
+};
 const getMvolaGuidedFees = (operationType) => {
   if (operationType === "RETRAIT") return mvolaWithdrawalOperatorFees;
   if (operationType === "TRANSFERT") return mvolaTransferOperatorFees;
@@ -582,7 +606,7 @@ function App() {
       }
       if (mode === "signup") {
         if (authForm.password !== authForm.confirmPassword) throw new Error("Les mots de passe ne correspondent pas.");
-        const signup = await api("/auth/signup", { method: "POST", body: JSON.stringify(authForm) });
+        const signup = await api("/auth/signup", { method: "POST", body: JSON.stringify({ ...authForm, phone: validateUserPhone(authForm.phone) }) });
         setMode("login");
         setMessage(signup.message || "Compte cree. En attente de validation par l'administrateur.");
         return;
@@ -626,6 +650,7 @@ function App() {
     e.preventDefault();
     if (!editingAdminUserId) return;
     try {
+      const cleanPhone = validateUserPhone(adminUserForm.phone);
       if (adminUserForm.password || adminUserForm.confirmPassword) {
         if (adminUserForm.password !== adminUserForm.confirmPassword) throw new Error("Les mots de passe ne correspondent pas.");
       }
@@ -634,7 +659,7 @@ function App() {
         body: JSON.stringify({
           name: adminUserForm.name,
           email: adminUserForm.email,
-          phone: adminUserForm.phone,
+          phone: cleanPhone,
           password: adminUserForm.password || undefined,
           confirmPassword: adminUserForm.confirmPassword || undefined,
         }),
@@ -747,10 +772,17 @@ function App() {
 
   const saveOperation = async (e) => {
     e.preventDefault();
+    let cleanCustomerPhone;
+    try {
+      cleanCustomerPhone = validateOperationPhone(opForm.customerPhone, opForm.operator);
+    } catch (error) {
+      setMessage(error.message);
+      return;
+    }
     const payload = {
       operator: opForm.operator,
       operationType: opForm.operationType,
-      customerPhone: opForm.customerPhone,
+      customerPhone: cleanCustomerPhone,
       customerName: opForm.customerName || null,
       reference: opForm.reference || null,
       amount: Number(opForm.amount),
@@ -1231,7 +1263,7 @@ function App() {
           <p>{mode === "setupAdmin" ? "Creez le premier compte administrateur pour demarrer le systeme." : "Solution de gestion de caisse mobile"}</p>
           {(mode === "signup" || mode === "setupAdmin") && <input placeholder={mode === "setupAdmin" ? "Nom complet administrateur" : "Nom complet"} value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />}
           <input placeholder={mode === "login" ? "Email ou numero telephone" : mode === "signup" ? "Email (facultatif)" : "Email administrateur"} value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
-          {mode === "signup" && <input placeholder="Numero telephone" value={authForm.phone} onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })} />}
+          {mode === "signup" && <input inputMode="numeric" maxLength={10} placeholder="Numero telephone (ex: 0380957550)" value={authForm.phone} onChange={(e) => setAuthForm({ ...authForm, phone: normalizePhoneInput(e.target.value) })} />}
           <input type="password" placeholder="Mot de passe" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
           {(mode === "signup" || mode === "setupAdmin") && <input type="password" placeholder="Confirmer mot de passe" value={authForm.confirmPassword} onChange={(e) => setAuthForm({ ...authForm, confirmPassword: e.target.value })} />}
           <button type="submit" className="btn primary">{mode === "setupAdmin" ? "Creer l'administrateur" : mode === "signup" ? "Creer mon compte" : "Connexion"}</button>
@@ -1781,7 +1813,7 @@ function App() {
                   ))}
                 </select>
               </label>
-              <label><span>Telephone client</span><input value={opForm.customerPhone} onChange={(e) => setOpForm({ ...opForm, customerPhone: e.target.value })} /></label>
+              <label><span>Telephone client</span><input inputMode="numeric" maxLength={10} placeholder={opForm.operator === "YAS" ? "034 ou 038..." : opForm.operator === "ORANGE" ? "032 ou 037..." : "033..."} value={opForm.customerPhone} onChange={(e) => setOpForm({ ...opForm, customerPhone: normalizePhoneInput(e.target.value) })} /></label>
               <label><span>Nom client</span><input value={opForm.customerName} onChange={(e) => setOpForm({ ...opForm, customerName: e.target.value })} /></label>
               <label><span>Reference (facultatif)</span><input value={opForm.reference} onChange={(e) => setOpForm({ ...opForm, reference: e.target.value })} /></label>
               <label><span>Montant</span><input type="number" value={opForm.amount} onChange={(e) => setOpForm({ ...opForm, amount: e.target.value })} /></label>
@@ -1835,7 +1867,7 @@ function App() {
             <div className="form-grid">
               <label><span>Nom complet</span><input value={adminUserForm.name} onChange={(e) => setAdminUserForm({ ...adminUserForm, name: e.target.value })} /></label>
               <label><span>Email (facultatif)</span><input value={adminUserForm.email} onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })} /></label>
-              <label><span>Numero telephone</span><input value={adminUserForm.phone} onChange={(e) => setAdminUserForm({ ...adminUserForm, phone: e.target.value })} /></label>
+              <label><span>Numero telephone</span><input inputMode="numeric" maxLength={10} value={adminUserForm.phone} onChange={(e) => setAdminUserForm({ ...adminUserForm, phone: normalizePhoneInput(e.target.value) })} /></label>
               <label><span>Nouveau mot de passe (facultatif)</span><input type="password" value={adminUserForm.password} onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })} /></label>
               <label><span>Confirmer nouveau mot de passe</span><input type="password" value={adminUserForm.confirmPassword} onChange={(e) => setAdminUserForm({ ...adminUserForm, confirmPassword: e.target.value })} /></label>
             </div>
