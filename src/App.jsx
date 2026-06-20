@@ -55,6 +55,36 @@ const mvolaWithdrawalOperatorFees = [
   { minAmount: 18000001, maxAmount: 19000000, operatorFee: 98000 },
   { minAmount: 19000001, maxAmount: 20000000, operatorFee: 100000 },
 ];
+const mvolaTransferOperatorFees = [
+  { minAmount: 100, maxAmount: 1000, operatorFee: 70 },
+  { minAmount: 1001, maxAmount: 5000, operatorFee: 70 },
+  { minAmount: 5001, maxAmount: 10000, operatorFee: 150 },
+  { minAmount: 10001, maxAmount: 25000, operatorFee: 250 },
+  { minAmount: 25001, maxAmount: 50000, operatorFee: 500 },
+  { minAmount: 50001, maxAmount: 100000, operatorFee: 1000 },
+  { minAmount: 100001, maxAmount: 250000, operatorFee: 1900 },
+  { minAmount: 250001, maxAmount: 500000, operatorFee: 1900 },
+  { minAmount: 500001, maxAmount: 1000000, operatorFee: 3200 },
+  { minAmount: 1000001, maxAmount: 2000000, operatorFee: 3800 },
+  { minAmount: 2000001, maxAmount: 3000000, operatorFee: 5000 },
+  { minAmount: 3000001, maxAmount: 4000000, operatorFee: 6300 },
+  { minAmount: 4000001, maxAmount: 5000000, operatorFee: 7500 },
+  { minAmount: 5000001, maxAmount: 6000000, operatorFee: 9400 },
+  { minAmount: 6000001, maxAmount: 7000000, operatorFee: 10700 },
+  { minAmount: 7000001, maxAmount: 8000000, operatorFee: 12500 },
+  { minAmount: 8000001, maxAmount: 9000000, operatorFee: 14400 },
+  { minAmount: 9000001, maxAmount: 10000000, operatorFee: 15700 },
+  { minAmount: 10000001, maxAmount: 11000000, operatorFee: 17500 },
+  { minAmount: 11000001, maxAmount: 12000000, operatorFee: 18800 },
+  { minAmount: 12000001, maxAmount: 13000000, operatorFee: 20000 },
+  { minAmount: 13000001, maxAmount: 14000000, operatorFee: 21300 },
+  { minAmount: 14000001, maxAmount: 15000000, operatorFee: 23200 },
+  { minAmount: 15000001, maxAmount: 16000000, operatorFee: 25000 },
+  { minAmount: 16000001, maxAmount: 17000000, operatorFee: 26300 },
+  { minAmount: 17000001, maxAmount: 18000000, operatorFee: 28200 },
+  { minAmount: 18000001, maxAmount: 19000000, operatorFee: 30000 },
+  { minAmount: 19000001, maxAmount: 20000000, operatorFee: 31300 },
+];
 const pageMeta = {
   accueil: { title: "Vue generale", subtitle: "Soldes et activite du jour" },
   historique: { title: "Journal", subtitle: "Mouvements recents" },
@@ -66,17 +96,23 @@ const pageMeta = {
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
 const formatArPdf = (v) => `${Number(v || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ")} Ar`;
 const safeFilePart = (value) => String(value || "rapport").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "rapport";
-const isMvolaWithdrawalTariff = (operator, operationType) => operator === "YAS" && operationType === "RETRAIT";
-const getNextMvolaWithdrawalFee = (tariffs) => {
+const getMvolaGuidedFees = (operationType) => {
+  if (operationType === "RETRAIT") return mvolaWithdrawalOperatorFees;
+  if (operationType === "TRANSFERT") return mvolaTransferOperatorFees;
+  return null;
+};
+const isMvolaGuidedTariff = (operator, operationType) => operator === "YAS" && Boolean(getMvolaGuidedFees(operationType));
+const getNextMvolaGuidedFee = (tariffs, operationType) => {
+  const guidedFees = getMvolaGuidedFees(operationType) || [];
   const existingRanges = new Set(
     tariffs
-      .filter((tariff) => isMvolaWithdrawalTariff(tariff.operator, tariff.operationType))
+      .filter((tariff) => tariff.operator === "YAS" && tariff.operationType === operationType)
       .map((tariff) => `${Number(tariff.minAmount)}-${Number(tariff.maxAmount)}`)
   );
-  return mvolaWithdrawalOperatorFees.find((fee) => !existingRanges.has(`${fee.minAmount}-${fee.maxAmount}`)) || null;
+  return guidedFees.find((fee) => !existingRanges.has(`${fee.minAmount}-${fee.maxAmount}`)) || null;
 };
-const findMvolaWithdrawalFee = (minAmount, maxAmount) =>
-  mvolaWithdrawalOperatorFees.find((fee) => fee.minAmount === Number(minAmount) && fee.maxAmount === Number(maxAmount)) || null;
+const findMvolaGuidedFee = (operationType, minAmount, maxAmount) =>
+  (getMvolaGuidedFees(operationType) || []).find((fee) => fee.minAmount === Number(minAmount) && fee.maxAmount === Number(maxAmount)) || null;
 
 const areSameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const formatHistoryDate = (dateString) => {
@@ -638,11 +674,11 @@ function App() {
   const saveTariff = async (e) => {
     e.preventDefault();
     try {
-      const enforcedMvolaFee = isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)
-        ? findMvolaWithdrawalFee(tariffForm.minAmount, tariffForm.maxAmount)
+      const enforcedMvolaFee = isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)
+        ? findMvolaGuidedFee(tariffForm.operationType, tariffForm.minAmount, tariffForm.maxAmount)
         : null;
-      if (isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType) && !enforcedMvolaFee) {
-        throw new Error("Tranche retrait Mvola invalide. Utilisez Ajouter tranche pour suivre le tableau officiel.");
+      if (isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType) && !enforcedMvolaFee) {
+        throw new Error("Tranche Mvola invalide. Utilisez Ajouter tranche pour suivre le tableau officiel.");
       }
       const tariffPayload = {
         ...tariffForm,
@@ -672,15 +708,15 @@ function App() {
   };
 
   const openTariffForm = () => {
-    if (isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)) {
-      const nextFee = getNextMvolaWithdrawalFee(tariffs);
+    if (isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)) {
+      const nextFee = getNextMvolaGuidedFee(tariffs, tariffForm.operationType);
       if (!nextFee) {
-        setMessage("Toutes les tranches de retrait Mvola du tableau sont deja ajoutees.");
+        setMessage(`Toutes les tranches de ${typeLabel[tariffForm.operationType].toLowerCase()} Mvola du tableau sont deja ajoutees.`);
         return;
       }
       setTariffForm({
         operator: "YAS",
-        operationType: "RETRAIT",
+        operationType: tariffForm.operationType,
         minAmount: nextFee.minAmount,
         maxAmount: nextFee.maxAmount,
         operatorFee: nextFee.operatorFee,
@@ -1815,16 +1851,16 @@ function App() {
         <div className="overlay" onClick={() => setShowTariffForm(false)}>
           <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={saveTariff}>
             <h3>{editingTariffId ? "Modifier tranche" : "Ajouter tranche"}</h3>
-            {isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType) && (
+            {isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType) && (
               <p>
-                Retrait Mvola: Min, Max et frais operateur sont remplis automatiquement depuis le tableau officiel.
+                {typeLabel[tariffForm.operationType]} Mvola: Min, Max et frais operateur sont remplis automatiquement depuis le tableau officiel.
                 Renseignez seulement vos frais personnels et le gain cumule.
               </p>
             )}
             <div className="form-grid">
-              <label><span>Min</span><input type="number" value={tariffForm.minAmount} readOnly={isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, minAmount: Number(e.target.value) })} /></label>
-              <label><span>Max</span><input type="number" value={tariffForm.maxAmount} readOnly={isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, maxAmount: Number(e.target.value) })} /></label>
-              <label><span>Frais operateur</span><input type="number" value={tariffForm.operatorFee} readOnly={isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, operatorFee: Number(e.target.value) })} /></label>
+              <label><span>Min</span><input type="number" value={tariffForm.minAmount} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, minAmount: Number(e.target.value) })} /></label>
+              <label><span>Max</span><input type="number" value={tariffForm.maxAmount} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, maxAmount: Number(e.target.value) })} /></label>
+              <label><span>Frais operateur</span><input type="number" value={tariffForm.operatorFee} readOnly={isMvolaGuidedTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, operatorFee: Number(e.target.value) })} /></label>
               <label><span>Frais personnel</span><input type="number" value={tariffForm.personalFee} onChange={(e) => setTariffForm({ ...tariffForm, personalFee: Number(e.target.value) })} /></label>
               <label><span>Gain cumulé</span><input type="number" value={tariffForm.gainCumule} onChange={(e) => setTariffForm({ ...tariffForm, gainCumule: Number(e.target.value) })} /></label>
             </div>
