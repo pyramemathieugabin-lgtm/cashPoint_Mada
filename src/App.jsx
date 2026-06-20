@@ -24,6 +24,37 @@ const types = ["DEPOT", "RETRAIT", "TRANSFERT", "CREDIT"];
 
 const opLabel = { YAS: "Mvola", AIRTEL: "Airtel Money", ORANGE: "Orange Money" };
 const typeLabel = { DEPOT: "Depot", RETRAIT: "Retrait", TRANSFERT: "Transfert", CREDIT: "Credit" };
+const mvolaWithdrawalOperatorFees = [
+  { minAmount: 100, maxAmount: 1000, operatorFee: 100 },
+  { minAmount: 1001, maxAmount: 5000, operatorFee: 150 },
+  { minAmount: 5001, maxAmount: 10000, operatorFee: 275 },
+  { minAmount: 10001, maxAmount: 20000, operatorFee: 550 },
+  { minAmount: 20001, maxAmount: 25000, operatorFee: 650 },
+  { minAmount: 25001, maxAmount: 50000, operatorFee: 1300 },
+  { minAmount: 50001, maxAmount: 100000, operatorFee: 1900 },
+  { minAmount: 100001, maxAmount: 250000, operatorFee: 3400 },
+  { minAmount: 250001, maxAmount: 500000, operatorFee: 4700 },
+  { minAmount: 500001, maxAmount: 1000000, operatorFee: 8800 },
+  { minAmount: 1000001, maxAmount: 2000000, operatorFee: 14700 },
+  { minAmount: 2000001, maxAmount: 3000000, operatorFee: 19600 },
+  { minAmount: 3000001, maxAmount: 4000000, operatorFee: 24500 },
+  { minAmount: 4000001, maxAmount: 5000000, operatorFee: 29400 },
+  { minAmount: 5000001, maxAmount: 6000000, operatorFee: 34300 },
+  { minAmount: 6000001, maxAmount: 7000000, operatorFee: 39200 },
+  { minAmount: 7000001, maxAmount: 8000000, operatorFee: 44100 },
+  { minAmount: 8000001, maxAmount: 9000000, operatorFee: 49000 },
+  { minAmount: 9000001, maxAmount: 10000000, operatorFee: 53900 },
+  { minAmount: 10000001, maxAmount: 11000000, operatorFee: 59000 },
+  { minAmount: 11000001, maxAmount: 12000000, operatorFee: 64000 },
+  { minAmount: 12000001, maxAmount: 13000000, operatorFee: 69000 },
+  { minAmount: 13000001, maxAmount: 14000000, operatorFee: 74000 },
+  { minAmount: 14000001, maxAmount: 15000000, operatorFee: 79000 },
+  { minAmount: 15000001, maxAmount: 16000000, operatorFee: 84000 },
+  { minAmount: 16000001, maxAmount: 17000000, operatorFee: 89000 },
+  { minAmount: 17000001, maxAmount: 18000000, operatorFee: 94000 },
+  { minAmount: 18000001, maxAmount: 19000000, operatorFee: 98000 },
+  { minAmount: 19000001, maxAmount: 20000000, operatorFee: 100000 },
+];
 const pageMeta = {
   accueil: { title: "Vue generale", subtitle: "Soldes et activite du jour" },
   historique: { title: "Journal", subtitle: "Mouvements recents" },
@@ -35,6 +66,17 @@ const pageMeta = {
 const formatAr = (v) => `${Number(v || 0).toLocaleString("fr-FR")} Ar`;
 const formatArPdf = (v) => `${Number(v || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ")} Ar`;
 const safeFilePart = (value) => String(value || "rapport").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "rapport";
+const isMvolaWithdrawalTariff = (operator, operationType) => operator === "YAS" && operationType === "RETRAIT";
+const getNextMvolaWithdrawalFee = (tariffs) => {
+  const existingRanges = new Set(
+    tariffs
+      .filter((tariff) => isMvolaWithdrawalTariff(tariff.operator, tariff.operationType))
+      .map((tariff) => `${Number(tariff.minAmount)}-${Number(tariff.maxAmount)}`)
+  );
+  return mvolaWithdrawalOperatorFees.find((fee) => !existingRanges.has(`${fee.minAmount}-${fee.maxAmount}`)) || null;
+};
+const findMvolaWithdrawalFee = (minAmount, maxAmount) =>
+  mvolaWithdrawalOperatorFees.find((fee) => fee.minAmount === Number(minAmount) && fee.maxAmount === Number(maxAmount)) || null;
 
 const areSameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const formatHistoryDate = (dateString) => {
@@ -596,15 +638,29 @@ function App() {
   const saveTariff = async (e) => {
     e.preventDefault();
     try {
+      const enforcedMvolaFee = isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)
+        ? findMvolaWithdrawalFee(tariffForm.minAmount, tariffForm.maxAmount)
+        : null;
+      if (isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType) && !enforcedMvolaFee) {
+        throw new Error("Tranche retrait Mvola invalide. Utilisez Ajouter tranche pour suivre le tableau officiel.");
+      }
+      const tariffPayload = {
+        ...tariffForm,
+        ...(enforcedMvolaFee ? {
+          minAmount: enforcedMvolaFee.minAmount,
+          maxAmount: enforcedMvolaFee.maxAmount,
+          operatorFee: enforcedMvolaFee.operatorFee,
+        } : {}),
+      };
       const localId = editingTariffId || `local-${crypto.randomUUID()}`;
       const nextTariffs = editingTariffId
-        ? tariffs.map((item) => item.id === editingTariffId ? { ...item, ...tariffForm, isPendingSync: true } : item)
-        : [{ ...tariffForm, id: localId, isPendingSync: true }, ...tariffs];
+        ? tariffs.map((item) => item.id === editingTariffId ? { ...item, ...tariffPayload, isPendingSync: true } : item)
+        : [{ ...tariffPayload, id: localId, isPendingSync: true }, ...tariffs];
       await queueRequest({
         type: "request",
         method: editingTariffId ? "PATCH" : "POST",
         path: editingTariffId ? `/tariffs/${editingTariffId}` : "/tariffs/upsert",
-        body: { ...tariffForm, id: localId },
+        body: { ...tariffPayload, id: localId },
         createdAt: new Date().toISOString(),
       });
       setTariffs(nextTariffs);
@@ -613,6 +669,27 @@ function App() {
       setShowTariffForm(false);
       trySync().then(fetchAll).catch(() => setMessage("Tarif enregistre hors ligne. Synchronisation automatique."));
     } catch (error) { setMessage(error.message); }
+  };
+
+  const openTariffForm = () => {
+    if (isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)) {
+      const nextFee = getNextMvolaWithdrawalFee(tariffs);
+      if (!nextFee) {
+        setMessage("Toutes les tranches de retrait Mvola du tableau sont deja ajoutees.");
+        return;
+      }
+      setTariffForm({
+        operator: "YAS",
+        operationType: "RETRAIT",
+        minAmount: nextFee.minAmount,
+        maxAmount: nextFee.maxAmount,
+        operatorFee: nextFee.operatorFee,
+        personalFee: 0,
+        gainCumule: 0,
+      });
+    }
+    setEditingTariffId(null);
+    setShowTariffForm(true);
   };
 
   const onEditTariff = (t) => {
@@ -1636,7 +1713,7 @@ function App() {
               ))}
             </div>
             <div className="row">{types.map((t) => <button key={t} className={`btn ${tariffForm.operationType === t ? "primary" : "quiet"}`} onClick={() => setTariffForm({ ...tariffForm, operationType: t })}>{typeLabel[t]}</button>)}</div>
-            <div className="row between"><strong>{opLabel[tariffForm.operator]} - {typeLabel[tariffForm.operationType]}</strong><button className="btn primary" onClick={() => setShowTariffForm(true)}>Ajouter tranche</button></div>
+            <div className="row between"><strong>{opLabel[tariffForm.operator]} - {typeLabel[tariffForm.operationType]}</strong><button className="btn primary" onClick={openTariffForm}>Ajouter tranche</button></div>
             <div className="list">{filteredTariffs.map((t) => <article className="tariff-row" key={t.id}><h4>{formatArPdf(t.minAmount)} a {formatArPdf(t.maxAmount)}</h4><p>Frais operateur: <strong>{formatArPdf(t.operatorFee)}</strong></p><p>Frais personnel: <strong>{formatArPdf(t.personalFee)}</strong></p><p>Gain cumulé: <strong>{formatArPdf(t.gainCumule || 0)}</strong></p><p>Frais client: <strong>{formatArPdf((t.operatorFee || 0) + (t.personalFee || 0))}</strong></p><div className="row"><button className="btn quiet" type="button" onClick={() => onEditTariff(t)}>Modifier</button><button className="btn danger" type="button" onClick={() => onDeleteTariff(t.id)}>Supprimer</button></div></article>)}</div>
           </section>
         )}
@@ -1738,10 +1815,16 @@ function App() {
         <div className="overlay" onClick={() => setShowTariffForm(false)}>
           <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={saveTariff}>
             <h3>{editingTariffId ? "Modifier tranche" : "Ajouter tranche"}</h3>
+            {isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType) && (
+              <p>
+                Retrait Mvola: Min, Max et frais operateur sont remplis automatiquement depuis le tableau officiel.
+                Renseignez seulement vos frais personnels et le gain cumule.
+              </p>
+            )}
             <div className="form-grid">
-              <label><span>Min</span><input type="number" value={tariffForm.minAmount} onChange={(e) => setTariffForm({ ...tariffForm, minAmount: Number(e.target.value) })} /></label>
-              <label><span>Max</span><input type="number" value={tariffForm.maxAmount} onChange={(e) => setTariffForm({ ...tariffForm, maxAmount: Number(e.target.value) })} /></label>
-              <label><span>Frais operateur</span><input type="number" value={tariffForm.operatorFee} onChange={(e) => setTariffForm({ ...tariffForm, operatorFee: Number(e.target.value) })} /></label>
+              <label><span>Min</span><input type="number" value={tariffForm.minAmount} readOnly={isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, minAmount: Number(e.target.value) })} /></label>
+              <label><span>Max</span><input type="number" value={tariffForm.maxAmount} readOnly={isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, maxAmount: Number(e.target.value) })} /></label>
+              <label><span>Frais operateur</span><input type="number" value={tariffForm.operatorFee} readOnly={isMvolaWithdrawalTariff(tariffForm.operator, tariffForm.operationType)} onChange={(e) => setTariffForm({ ...tariffForm, operatorFee: Number(e.target.value) })} /></label>
               <label><span>Frais personnel</span><input type="number" value={tariffForm.personalFee} onChange={(e) => setTariffForm({ ...tariffForm, personalFee: Number(e.target.value) })} /></label>
               <label><span>Gain cumulé</span><input type="number" value={tariffForm.gainCumule} onChange={(e) => setTariffForm({ ...tariffForm, gainCumule: Number(e.target.value) })} /></label>
             </div>
