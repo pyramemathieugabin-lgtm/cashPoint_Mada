@@ -413,6 +413,7 @@ function App() {
   const [adminStatusFilter, setAdminStatusFilter] = useState("all");
   const [adminUserForm, setAdminUserForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "" });
   const [editingAdminUserId, setEditingAdminUserId] = useState(null);
+  const [adminConfirm, setAdminConfirm] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [period, setPeriod] = useState("daily");
   const [history, setHistory] = useState([]);
@@ -742,22 +743,33 @@ function App() {
       if (adminUserForm.password || adminUserForm.confirmPassword) {
         if (adminUserForm.password !== adminUserForm.confirmPassword) throw new Error("Les mots de passe ne correspondent pas.");
       }
-      await api(`/auth/admin/users/${editingAdminUserId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
+      setAdminConfirm({
+        type: "update",
+        userId: editingAdminUserId,
+        title: "Confirmer la modification",
+        message: "Voulez-vous vraiment enregistrer les modifications de cet utilisateur ?",
+        payload: {
           name: adminUserForm.name,
           email: adminUserForm.email,
           phone: cleanPhone,
           password: adminUserForm.password || undefined,
           confirmPassword: adminUserForm.confirmPassword || undefined,
-        }),
+        },
       });
-      cancelAdminEdit();
-      await fetchAdminDashboard();
-      setMessage("Utilisateur modifie.");
     } catch (error) {
       setMessage(error.message);
     }
+  };
+
+  const executeAdminUserUpdate = async (confirmation) => {
+    await api(`/auth/admin/users/${confirmation.userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(confirmation.payload),
+    });
+    setAdminConfirm(null);
+    cancelAdminEdit();
+    await fetchAdminDashboard();
+    setMessage("Utilisateur modifie.");
   };
 
   const updateAdminUserStatus = async (item, action) => {
@@ -773,16 +785,35 @@ function App() {
     }
   };
 
-  const deleteAdminUser = async (id) => {
+  const confirmDeleteAdminUser = (item) => {
+    setAdminConfirm({
+      type: "delete",
+      userId: item.id,
+      title: "Confirmer la suppression",
+      message: `Voulez-vous vraiment supprimer l'utilisateur ${item.name || "selectionne"} ? Cette action est definitive.`,
+    });
+  };
+
+  const executeAdminUserDelete = async (confirmation) => {
+    await api(`/auth/admin/users/${confirmation.userId}`, { method: "DELETE" });
+    if (editingAdminUserId === confirmation.userId) cancelAdminEdit();
+    setAdminConfirm(null);
+    await fetchAdminDashboard();
+    setMessage("Utilisateur supprime.");
+  };
+
+  const runAdminConfirmation = async () => {
+    if (!adminConfirm) return;
     try {
-      await api(`/auth/admin/users/${id}`, { method: "DELETE" });
-      if (editingAdminUserId === id) cancelAdminEdit();
-      await fetchAdminDashboard();
-      setMessage("Utilisateur supprime.");
+      if (adminConfirm.type === "update") await executeAdminUserUpdate(adminConfirm);
+      if (adminConfirm.type === "delete") await executeAdminUserDelete(adminConfirm);
     } catch (error) {
       setMessage(error.message);
+      setAdminConfirm(null);
     }
   };
+
+  const closeAdminConfirmation = () => setAdminConfirm(null);
 
   const saveTariff = async (e) => {
     e.preventDefault();
@@ -1471,7 +1502,7 @@ function App() {
                       {!item.isValidated || item.isBlocked
                         ? <button className="btn primary" type="button" onClick={() => updateAdminUserStatus(item, "validate")}>Valider</button>
                         : <button className="btn danger" type="button" onClick={() => updateAdminUserStatus(item, "block")}>Bloquer</button>}
-                      <button className="btn danger" type="button" onClick={() => deleteAdminUser(item.id)}>Supprimer</button>
+                      <button className="btn danger" type="button" onClick={() => confirmDeleteAdminUser(item)}>Supprimer</button>
                     </div>
                   </article>
                 );
@@ -1968,6 +1999,18 @@ function App() {
         </div>
       )}
 
+      {adminConfirm && (
+        <div className="overlay" onClick={closeAdminConfirmation}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>{adminConfirm.title}</h3>
+            <p>{adminConfirm.message}</p>
+            <div className="row">
+              <button type="button" className="btn quiet" onClick={closeAdminConfirmation}>Annuler</button>
+              <button type="button" className={adminConfirm.type === "delete" ? "btn danger" : "btn primary"} onClick={runAdminConfirmation}>Confirmer</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showTariffForm && (
         <div className="overlay" onClick={() => setShowTariffForm(false)}>
           <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={saveTariff}>
