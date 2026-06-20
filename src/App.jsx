@@ -163,6 +163,46 @@ const buildLocalJournal = (history, closingBalances, createdAt) => {
   };
 };
 
+const getActiveDayStartTime = (history, createdAt = new Date().toISOString()) => {
+  const closeTime = new Date(createdAt).getTime();
+  const openings = history
+    .filter((item) => item.kind === "OPENING" && new Date(item.createdAt || 0).getTime() <= closeTime)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  return new Date(openings[0]?.createdAt || createdAt).getTime();
+};
+
+const missingRequiredReferencesForClose = (history, createdAt = new Date().toISOString()) => {
+  const dayStartTime = getActiveDayStartTime(history, createdAt);
+  const closeTime = new Date(createdAt).getTime();
+  return history.filter((item) => {
+    const itemTime = new Date(item.createdAt || 0).getTime();
+    if (item.kind !== "TRANSACTION" || item.isCancelled) return false;
+    if (!["DEPOT", "TRANSFERT"].includes(item.operationType)) return false;
+    if (itemTime < dayStartTime || itemTime > closeTime) return false;
+    return !String(item.reference || "").trim();
+  });
+};
+
+const buildCloseDaySummary = (history, balances, createdAt = new Date().toISOString()) => {
+  const dayStartTime = getActiveDayStartTime(history, createdAt);
+  const closeTime = new Date(createdAt).getTime();
+  const dayItems = history.filter((item) => {
+    const itemTime = new Date(item.createdAt || 0).getTime();
+    return itemTime >= dayStartTime && itemTime <= closeTime;
+  });
+  return operators.map((operator) => {
+    const opening = dayItems.find((item) => item.kind === "OPENING" && item.operator === operator);
+    const balance = balances.find((item) => item.operator === operator) || {};
+    return {
+      operator,
+      initialCash: Number(opening?.initialCashBalance || 0),
+      initialMobile: Number(opening?.initialMobileBalance || 0),
+      finalCash: Number(balance.cashBalance || 0),
+      finalMobile: Number(balance.mobileBalance || 0),
+    };
+  });
+};
+
 function App() {
   const [token, setToken] = useState(getStoredToken());
   const [isBooting, setIsBooting] = useState(true);
@@ -199,6 +239,8 @@ function App() {
   const [reapproForm, setReapproForm] = useState({ operator: "YAS", cashAmount: 0, mobileAmount: 0 });
   const [showReapproForm, setShowReapproForm] = useState(false);
   const [showStartDayForm, setShowStartDayForm] = useState(false);
+  const [showCloseDayConfirm, setShowCloseDayConfirm] = useState(false);
+  const [closeDaySummary, setCloseDaySummary] = useState([]);
   const [startDayForm, setStartDayForm] = useState([
     { operator: "YAS", cashBalance: 0, mobileBalance: 0 },
     { operator: "AIRTEL", cashBalance: 0, mobileBalance: 0 },
@@ -738,9 +780,26 @@ function App() {
     catch (error) { setMessage(error.message); }
   };
 
+  const requestCloseDay = () => {
+    const missingReferences = missingRequiredReferencesForClose(history);
+    if (missingReferences.length) {
+      const examples = missingReferences
+        .slice(0, 3)
+        .map((item) => `${typeLabel[item.operationType]} ${opLabel[item.operator]} - ${formatArPdf(item.amount)}${item.customerName ? ` (${item.customerName})` : ""}`)
+        .join(", ");
+      setMessage(`Impossible de cloturer: ${missingReferences.length} depot/transfert sans reference. Completez les references obligatoires.${examples ? ` Ex: ${examples}` : ""}`);
+      setActivePage("historique");
+      return;
+    }
+    setCloseDaySummary(buildCloseDaySummary(history, balances));
+    setShowCloseDayConfirm(true);
+  };
+
   const closeDay = async () => {
     try {
       const createdAt = new Date().toISOString();
+      const missingReferences = missingRequiredReferencesForClose(history, createdAt);
+      if (missingReferences.length) throw new Error("Completez les references obligatoires des depots et transferts avant de cloturer la journee.");
       await queueRequest({ type: "request", method: "POST", path: "/cashbox/day/close", body: {}, createdAt });
       const closings = balances.map((item) => ({
         id: `local-${crypto.randomUUID()}`,
@@ -759,6 +818,7 @@ function App() {
       setHistory(nextHistory);
       setJournals(nextJournals);
       setDayStarted(false);
+      setShowCloseDayConfirm(false);
       await persistSnapshot({ hist: nextHistory, journalsList: nextJournals, cash: { operators: balances, dayStarted: false } });
       trySync().then(fetchAll).catch(() => setMessage("Journee cloturee hors ligne. Synchronisation automatique."));
     }
@@ -1312,7 +1372,7 @@ function App() {
         {activePage === "caisse" && (
           <section className="panel">
             <div className="row">
-              {!dayStarted ? <button className="btn primary" onClick={openStartDayModal}>Demarrer la journee</button> : <><button className="btn quiet" onClick={closeDay}>Fermer la journee</button><button className="btn primary" onClick={() => setShowReapproForm(true)}>Reapprovisionner</button></>}
+              {!dayStarted ? <button className="btn primary" onClick={openStartDayModal}>Demarrer la journee</button> : <><button className="btn quiet" onClick={requestCloseDay}>Fermer la journee</button><button className="btn primary" onClick={() => setShowReapproForm(true)}>Reapprovisionner</button></>}
             </div>
             <div className="view-grid">{balances.map((b) => <article key={b.id} className="operator-card"><header className={`badge ${b.operator.toLowerCase()}`}>{opLabel[b.operator]}</header><div className="duo"><div><span>Float</span><strong>{formatArPdf(b.mobileBalance)}</strong></div><div><span>Cash</span><strong>{formatArPdf(b.cashBalance)}</strong></div></div></article>)}</div>
           </section>
@@ -1713,6 +1773,32 @@ function App() {
             </div>
             <div className="row"><button type="button" className="btn quiet" onClick={() => setShowReapproForm(false)}>Annuler</button><button type="submit" className="btn primary">Valider</button></div>
           </form>
+        </div>
+      )}
+
+      {showCloseDayConfirm && (
+        <div className="overlay" onClick={() => setShowCloseDayConfirm(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Confirmer la cloture de la journee</h3>
+            <p>Verifiez les caisses de debut et les restes avant d'enregistrer la cloture.</p>
+            <div className="view-grid">
+              {closeDaySummary.map((item) => (
+                <article key={item.operator} className="operator-card">
+                  <header className={`badge ${item.operator.toLowerCase()}`}>{opLabel[item.operator]}</header>
+                  <div className="duo">
+                    <div><span>Cash debut</span><strong>{formatArPdf(item.initialCash)}</strong></div>
+                    <div><span>Float debut</span><strong>{formatArPdf(item.initialMobile)}</strong></div>
+                    <div><span>Cash restant</span><strong>{formatArPdf(item.finalCash)}</strong></div>
+                    <div><span>Float restant</span><strong>{formatArPdf(item.finalMobile)}</strong></div>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="row">
+              <button type="button" className="btn quiet" onClick={() => setShowCloseDayConfirm(false)}>Retour</button>
+              <button type="button" className="btn primary" onClick={closeDay}>Confirmer la cloture</button>
+            </div>
+          </div>
         </div>
       )}
 
